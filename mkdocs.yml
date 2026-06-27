@@ -1,0 +1,44 @@
+site_name: Runlet
+site_description: A small, provider-neutral Python agent runtime library.
+site_url: https://dmiaochen.github.io/runlet/
+repo_url: https://github.com/DMIAOCHEN/runlet
+repo_name: DMIAOCHEN/runlet
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - First Agent: getting-started/first-agent.md
+      - OpenAI Chat Completions: getting-started/openai-chat-completions.md
+      - OpenAI Responses: getting-started/openai-responses.md
+      - Streaming: getting-started/streaming.md
+      - Tool Calling: getting-started/tool-calling.md
+      - Full Example: getting-started/full-example.md
+  - Guides:
+      - Conversation State: guides/conversation-state.md
+      - Provider Options: guides/provider-options.md
+      - Reasoning: guides/reasoning.md
+      - Observability: guides/observability.md
+  - Concepts:
+      - Runtime Boundary: concepts/runtime-boundary.md
+      - Core Models: concepts/core-models.md
+      - Provider Neutrality: concepts/provider-neutrality.md
+  - Background:
+      - Architecture: architecture.md
+      - Design Principles: design-principles.md
+      - Comparison: comparison.md
+      - Roadmap: roadmap.md
