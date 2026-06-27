@@ -27,6 +27,7 @@ class OpenAIChatCompletionsProvider:
         return ModelResponse(
             message=message,
             tool_calls=self._tool_calls_from_message(getattr(self._first_choice(response), "message", None)),
+            reasoning=self._reasoning_from_message(getattr(self._first_choice(response), "message", None)),
             usage=self._usage_from_response(response),
             raw=response,
         )
@@ -48,6 +49,9 @@ class OpenAIChatCompletionsProvider:
                 continue
 
             delta = getattr(choice, "delta", None)
+            reasoning_delta = self._reasoning_from_message(delta)
+            if reasoning_delta:
+                yield ProviderStreamEvent.reasoning_delta(reasoning_delta, raw=chunk)
             text_delta = self._text_from_content(getattr(delta, "content", None))
             if text_delta:
                 yield ProviderStreamEvent.text_delta(text_delta, raw=chunk)
@@ -214,6 +218,15 @@ class OpenAIChatCompletionsProvider:
                 )
             )
         return tool_calls
+
+    def _reasoning_from_message(self, message: Any) -> str:
+        if message is None:
+            return ""
+        for attr in ("reasoning_content", "reasoning", "thinking"):
+            value = getattr(message, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return ""
 
     def _usage_from_response(self, response: Any) -> Usage:
         return self._usage_from_chat_usage(getattr(response, "usage", None))

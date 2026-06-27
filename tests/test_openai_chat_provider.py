@@ -51,6 +51,7 @@ class OpenAIChatProviderTests(unittest.IsolatedAsyncioTestCase):
         from runlet.providers.openai_chat import OpenAIChatCompletionsProvider
 
         fake_response = FakeChatResponse("hello back", input_tokens=5, output_tokens=7)
+        fake_response.choices[0].message.reasoning_content = "reasoning"
         client = RecordingClient(fake_response)
         provider = OpenAIChatCompletionsProvider(model="gpt-test", client=client)
         request = ModelRequest(
@@ -66,6 +67,7 @@ class OpenAIChatProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.message.role, "assistant")
         self.assertEqual(response.message.text, "hello back")
         self.assertEqual(response.usage, Usage(input_tokens=5, output_tokens=7))
+        self.assertEqual(response.reasoning, "reasoning")
         self.assertEqual(client.chat.completions.calls[0]["model"], "gpt-test")
         self.assertEqual(
             client.chat.completions.calls[0]["messages"],
@@ -192,11 +194,21 @@ class OpenAIChatProviderTests(unittest.IsolatedAsyncioTestCase):
         client = RecordingClient(FakeChatResponse("ok"))
         client.chat.completions.stream_events = [
             types.SimpleNamespace(
-                choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="hel"), finish_reason=None)],
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(content="hel", reasoning_content="think "),
+                        finish_reason=None,
+                    )
+                ],
                 usage=None,
             ),
             types.SimpleNamespace(
-                choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="lo"), finish_reason=None)],
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(content="lo", reasoning_content="more"),
+                        finish_reason=None,
+                    )
+                ],
                 usage=None,
             ),
             types.SimpleNamespace(
@@ -210,10 +222,12 @@ class OpenAIChatProviderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [event.kind for event in events],
-            ["text_delta", "text_delta", "usage", "message_completed", "completed"],
+            ["reasoning_delta", "text_delta", "reasoning_delta", "text_delta", "usage", "message_completed", "completed"],
         )
         self.assertEqual([event.delta for event in events if event.kind == "text_delta"], ["hel", "lo"])
-        self.assertEqual(events[2].usage, Usage(input_tokens=3, output_tokens=2))
+        self.assertEqual([event.reasoning for event in events if event.kind == "reasoning_delta"], ["think ", "more"])
+        usage_event = next(event for event in events if event.kind == "usage")
+        self.assertEqual(usage_event.usage, Usage(input_tokens=3, output_tokens=2))
 
     async def test_stream_yields_tool_call_events(self) -> None:
         from runlet.providers.openai_chat import OpenAIChatCompletionsProvider

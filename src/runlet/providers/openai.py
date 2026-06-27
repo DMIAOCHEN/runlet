@@ -26,6 +26,7 @@ class OpenAIResponsesProvider:
         return ModelResponse(
             message=Message.assistant(response.output_text),
             tool_calls=self._tool_calls_from_response(response),
+            reasoning=self._reasoning_from_response(response),
             usage=self._usage_from_response(response),
             raw=response,
         )
@@ -47,6 +48,12 @@ class OpenAIResponsesProvider:
         completed_tool_calls: set[str] = set()
         for event in self._iter_stream_events(stream_result):
             event_type = getattr(event, "type", "")
+            if event_type == "response.reasoning_text.delta":
+                reasoning_delta = str(getattr(event, "delta", "") or "")
+                if reasoning_delta:
+                    yield ProviderStreamEvent.reasoning_delta(reasoning_delta, raw=event)
+                continue
+
             if event_type == "response.output_text.delta":
                 yield ProviderStreamEvent.text_delta(str(getattr(event, "delta", "")), raw=event)
                 continue
@@ -190,6 +197,21 @@ class OpenAIResponsesProvider:
                 )
             )
         return tool_calls
+
+    def _reasoning_from_response(self, response: Any) -> str:
+        parts: list[str] = []
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", "") != "reasoning":
+                continue
+            summary = cast(list[object], getattr(item, "summary", None) or [])
+            for summary_item in summary:
+                text = getattr(summary_item, "text", None)
+                if isinstance(text, str) and text:
+                    parts.append(text)
+            text = getattr(item, "text", None)
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return "".join(parts)
 
     def _assistant_tool_call_items(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

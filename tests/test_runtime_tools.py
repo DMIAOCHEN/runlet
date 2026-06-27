@@ -20,8 +20,9 @@ class RuntimeToolTests(unittest.IsolatedAsyncioTestCase):
                     message=Message.assistant(""),
                     tool_calls=[ToolCall(id="call_1", name="lookup", arguments={"order_id": "123"})],
                     final=False,
+                    reasoning="first step ",
                 ),
-                ModelResponse(message=Message.assistant("order 123 shipped")),
+                ModelResponse(message=Message.assistant("order 123 shipped"), reasoning="second step"),
             ]
         )
         observer = InMemoryObserver()
@@ -31,6 +32,7 @@ class RuntimeToolTests(unittest.IsolatedAsyncioTestCase):
         result = await runtime.run(agent, "where is 123?")
 
         self.assertEqual(result.output, "order 123 shipped")
+        self.assertEqual(result.reasoning, "first step second step")
         self.assertIn("tool.started", [event.type for event in observer.events])
         self.assertIn("tool.completed", [event.type for event in observer.events])
         self.assertEqual(len(model.requests), 2)
@@ -53,6 +55,7 @@ class RuntimeToolTests(unittest.IsolatedAsyncioTestCase):
         result = await runtime.run_request(agent, request)
 
         self.assertEqual(result.output, "done")
+        self.assertEqual(result.reasoning, "")
         self.assertEqual(
             model.requests[0].options,
             {"openai": {"extra_body": {"store": False}}},

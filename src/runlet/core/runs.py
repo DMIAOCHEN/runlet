@@ -45,6 +45,7 @@ class RunResult:
     run_id: str
     status: str
     output: str | None = None
+    reasoning: str = ""
     messages: tuple[Message, ...] = ()
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
@@ -54,6 +55,7 @@ class RunResult:
         cls,
         run_id: str,
         output: str,
+        reasoning: str = "",
         usage: Usage | None = None,
         messages: tuple[Message, ...] = (),
     ) -> "RunResult":
@@ -61,6 +63,7 @@ class RunResult:
             run_id=run_id,
             status="completed",
             output=output,
+            reasoning=reasoning,
             usage=usage or Usage(),
             messages=messages,
         )
@@ -70,12 +73,14 @@ class RunResult:
         cls,
         run_id: str,
         error: str,
+        reasoning: str = "",
         usage: Usage | None = None,
         messages: tuple[Message, ...] = (),
     ) -> "RunResult":
         return cls(
             run_id=run_id,
             status="failed",
+            reasoning=reasoning,
             usage=usage or Usage(),
             error=error,
             messages=messages,

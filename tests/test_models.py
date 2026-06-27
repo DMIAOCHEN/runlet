@@ -1,6 +1,6 @@
 import unittest
 
-from runlet.core import Message, ToolCall, Usage
+from runlet.core import Message, RunResult, ToolCall, Usage
 from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse
 from runlet.testing import FakeModelProvider, FakeStreamingModelProvider
 
@@ -37,7 +37,19 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
             message=Message.assistant(""),
             tool_calls=[ToolCall(id="call_1", name="lookup", arguments={"id": "1"})],
             usage=Usage(input_tokens=5, output_tokens=3),
+            reasoning="step by step",
         )
 
         self.assertEqual(response.tool_calls[0].name, "lookup")
         self.assertEqual(response.usage.total_tokens, 8)
+        self.assertEqual(response.reasoning, "step by step")
+
+    def test_run_result_can_include_reasoning(self) -> None:
+        result = RunResult.completed(
+            run_id="run_1",
+            output="hello",
+            reasoning="reasoning text",
+        )
+
+        self.assertEqual(result.output, "hello")
+        self.assertEqual(result.reasoning, "reasoning text")

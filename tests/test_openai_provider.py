@@ -79,6 +79,7 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         from runlet.providers.openai import OpenAIResponsesProvider
 
         fake_response = FakeOpenAIResponse("hello back", input_tokens=5, output_tokens=7)
+        fake_response.output = cast(list[object], [types.SimpleNamespace(type="reasoning", summary=[types.SimpleNamespace(text="reasoning")])])
         client = RecordingClient(fake_response)
         provider = OpenAIResponsesProvider(model="gpt-test", client=client)
         request = ModelRequest(
@@ -94,6 +95,7 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.message.role, "assistant")
         self.assertEqual(response.message.text, "hello back")
         self.assertEqual(response.usage, Usage(input_tokens=5, output_tokens=7))
+        self.assertEqual(response.reasoning, "reasoning")
         self.assertEqual(client.responses.calls[0]["model"], "gpt-test")
         self.assertEqual(
             client.responses.calls[0]["input"],
@@ -231,7 +233,9 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         client = RecordingClient(FakeOpenAIResponse("ok"))
         client.responses.stream_events = [
             types.SimpleNamespace(type="response.created"),
+            types.SimpleNamespace(type="response.reasoning_text.delta", delta="think "),
             types.SimpleNamespace(type="response.output_text.delta", delta="hel"),
+            types.SimpleNamespace(type="response.reasoning_text.delta", delta="more"),
             types.SimpleNamespace(type="response.output_text.delta", delta="lo"),
             types.SimpleNamespace(
                 type="response.completed",
@@ -244,9 +248,14 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         events = [event async for event in provider.stream(ModelRequest(messages=[Message.user("hi")]))]
 
-        self.assertEqual([event.kind for event in events], ["text_delta", "text_delta", "usage", "message_completed", "completed"])
+        self.assertEqual(
+            [event.kind for event in events],
+            ["reasoning_delta", "text_delta", "reasoning_delta", "text_delta", "usage", "message_completed", "completed"],
+        )
         self.assertEqual([event.delta for event in events if event.kind == "text_delta"], ["hel", "lo"])
-        self.assertEqual(events[2].usage, Usage(input_tokens=3, output_tokens=2))
+        self.assertEqual([event.reasoning for event in events if event.kind == "reasoning_delta"], ["think ", "more"])
+        usage_event = next(event for event in events if event.kind == "usage")
+        self.assertEqual(usage_event.usage, Usage(input_tokens=3, output_tokens=2))
 
     async def test_stream_supports_context_managed_response_stream(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider

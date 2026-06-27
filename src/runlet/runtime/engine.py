@@ -53,6 +53,7 @@ class Runtime:
         request = self._merge_request_defaults(agent, request)
         messages = list(request.messages)
         tools = {tool_spec.name: tool_spec for tool_spec in request.tools if isinstance(tool_spec, ToolSpec)}
+        collected_reasoning: list[str] = []
 
         for _ in range(self.policy.max_steps):
             step_request = self._step_request_from_state(request, messages, tools)
@@ -70,6 +71,8 @@ class Runtime:
             await self.event_sink.emit(RuntimeEvent(type="model.requested", run_id=run_id, agent_name=agent.name))
             response = await agent.model.complete(prepared.request)
             response = await hook_runner.after_model_response(response, None)
+            if response.reasoning:
+                collected_reasoning.append(response.reasoning)
             await self.event_sink.emit(
                 RuntimeEvent(
                     type="model.completed",
@@ -101,36 +104,45 @@ class Runtime:
                             payload={"name": call.name},
                         )
                     )
-                    result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
-                    result = await hook_runner.after_tool_result(result, None)
+                    tool_result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
+                    tool_result = await hook_runner.after_tool_result(tool_result, None)
                     await self.event_sink.emit(
                         RuntimeEvent(
                             type="tool.completed",
                             run_id=run_id,
                             agent_name=agent.name,
-                            payload={"name": result.name},
+                            payload={"name": tool_result.name},
                         )
                     )
                     messages.append(
                         Message.tool(
-                            result.content,
-                            metadata={"tool_call_id": result.call_id, "name": result.name},
+                            tool_result.content,
+                            metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
                         )
                     )
                 continue
 
-            result = RunResult.completed(run_id=run_id, output=response.message.text, usage=response.usage)
+            run_result = RunResult.completed(
+                run_id=run_id,
+                output=response.message.text,
+                reasoning="".join(collected_reasoning),
+                usage=response.usage,
+            )
             await self.event_sink.emit(
                 RuntimeEvent(
                     type="run.completed",
                     run_id=run_id,
                     agent_name=agent.name,
-                    payload={"output": result.output},
+                    payload={"output": run_result.output, "reasoning": run_result.reasoning},
                 )
             )
-            return result
+            return run_result
 
-        result = RunResult.failed(run_id=run_id, error="Maximum steps exceeded")
+        run_result = RunResult.failed(
+            run_id=run_id,
+            error="Maximum steps exceeded",
+            reasoning="".join(collected_reasoning),
+        )
         await self.event_sink.emit(
             RuntimeEvent(
                 type="policy.stopped",
@@ -139,7 +151,7 @@ class Runtime:
                 payload={"reason": "max_steps"},
             )
         )
-        return result
+        return run_result
 
     async def stream(self, agent: Agent, input: str):
         async for event in self.stream_request(
@@ -170,6 +182,8 @@ class Runtime:
         request = self._merge_request_defaults(agent, request)
         messages = list(request.messages)
         tools = {tool_spec.name: tool_spec for tool_spec in request.tools if isinstance(tool_spec, ToolSpec)}
+        all_text_deltas: list[str] = []
+        all_reasoning_deltas: list[str] = []
 
         for _ in range(self.policy.max_steps):
             step_request = self._step_request_from_state(request, messages, tools)
@@ -196,16 +210,31 @@ class Runtime:
             saw_message_completed = False
             executed_tool = False
             collected_deltas: list[str] = []
+            collected_reasoning_deltas: list[str] = []
             completed_tool_calls: list[dict[str, object]] = []
             pending_tool_messages: list[Message] = []
             async for step_event in self._iter_provider_stream_events(agent.model.stream(prepared.request)):
                 if step_event.kind == "text_delta" and step_event.delta:
                     collected_deltas.append(step_event.delta)
+                    all_text_deltas.append(step_event.delta)
                     event = RuntimeEvent(
                         type="model.stream.delta",
                         run_id=run_id,
                         agent_name=agent.name,
                         payload={"delta": step_event.delta},
+                    )
+                    await self.event_sink.emit(event)
+                    yield event
+                    continue
+
+                if step_event.kind == "reasoning_delta" and step_event.reasoning:
+                    collected_reasoning_deltas.append(step_event.reasoning)
+                    all_reasoning_deltas.append(step_event.reasoning)
+                    event = RuntimeEvent(
+                        type="model.stream.reasoning_delta",
+                        run_id=run_id,
+                        agent_name=agent.name,
+                        payload={"delta": step_event.reasoning},
                     )
                     await self.event_sink.emit(event)
                     yield event
@@ -225,20 +254,20 @@ class Runtime:
                             payload={"name": call.name},
                         )
                     )
-                    result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
-                    result = await hook_runner.after_tool_result(result, None)
+                    tool_result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
+                    tool_result = await hook_runner.after_tool_result(tool_result, None)
                     await self.event_sink.emit(
                         RuntimeEvent(
                             type="tool.completed",
                             run_id=run_id,
                             agent_name=agent.name,
-                            payload={"name": result.name},
+                            payload={"name": tool_result.name},
                         )
                     )
                     pending_tool_messages.append(
                         Message.tool(
-                            result.content,
-                            metadata={"tool_call_id": result.call_id, "name": result.name},
+                            tool_result.content,
+                            metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
                         )
                     )
                     executed_tool = True
@@ -257,7 +286,13 @@ class Runtime:
 
             if executed_tool:
                 messages.append(
-                    Message.assistant("".join(collected_deltas), metadata={"tool_calls": completed_tool_calls})
+                    Message.assistant(
+                        "".join(collected_deltas),
+                        metadata={
+                            "tool_calls": completed_tool_calls,
+                            "reasoning": "".join(collected_reasoning_deltas),
+                        },
+                    )
                 )
                 messages.extend(pending_tool_messages)
                 continue
@@ -268,6 +303,7 @@ class Runtime:
                         type="run.completed",
                         run_id=run_id,
                         agent_name=agent.name,
+                        payload={"output": "".join(all_text_deltas), "reasoning": "".join(all_reasoning_deltas)},
                     )
                 )
                 return
@@ -292,6 +328,8 @@ class Runtime:
 
             if chunk.delta:
                 yield ProviderStreamEvent.text_delta(chunk.delta, raw=chunk.raw)
+            if getattr(chunk, "reasoning", ""):
+                yield ProviderStreamEvent.reasoning_delta(getattr(chunk, "reasoning"), raw=chunk.raw)
             if chunk.tool_call is not None:
                 yield ProviderStreamEvent.tool_call_completed(
                     call_id=chunk.tool_call.id,

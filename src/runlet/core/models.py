@@ -41,6 +41,7 @@ class ModelRequest:
 class ModelResponse:
     message: Message
     tool_calls: list[ToolCall] = field(default_factory=_tool_call_list)
+    reasoning: str = ""
     usage: Usage = field(default_factory=Usage)
     final: bool = True
     raw: Any = None
@@ -63,6 +64,7 @@ def _arguments_map() -> dict[str, Any]:
 class ProviderStreamEvent:
     kind: str
     delta: str = ""
+    reasoning: str = ""
     call_id: str | None = None
     name: str | None = None
     arguments_delta: str = ""
@@ -73,6 +75,10 @@ class ProviderStreamEvent:
     @classmethod
     def text_delta(cls, delta: str, raw: Any = None) -> "ProviderStreamEvent":
         return cls(kind="text_delta", delta=delta, raw=raw)
+
+    @classmethod
+    def reasoning_delta(cls, delta: str, raw: Any = None) -> "ProviderStreamEvent":
+        return cls(kind="reasoning_delta", reasoning=delta, raw=raw)
 
     @classmethod
     def tool_call_delta(
