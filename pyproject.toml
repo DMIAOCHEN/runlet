@@ -31,9 +31,9 @@ openai = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/runlet/runlet"
-Repository = "https://github.com/runlet/runlet"
-Issues = "https://github.com/runlet/runlet/issues"
+Homepage = "https://github.com/DMIAOCHEN/runlet"
+Repository = "https://github.com/DMIAOCHEN/runlet"
+Issues = "https://github.com/DMIAOCHEN/runlet/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runlet"]

@@ -199,3 +199,34 @@ Run the current test suite:
 ```bash
 PYTHONPATH=src python3 -m unittest discover tests
 ```
+
+## Releasing
+
+Runlet publishes to PyPI from Git tags through GitHub Actions.
+
+Release flow:
+
+1. Update `[project].version` in `pyproject.toml`
+2. Merge the release commit to `main`
+3. Create a version tag such as `v0.1.0`
+4. Push the tag to GitHub
+
+The publish workflow will:
+
+- verify the Git tag matches `pyproject.toml`
+- run the test suite
+- build `sdist` and `wheel`
+- validate package metadata
+- publish to PyPI through Trusted Publishing
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Repository setup requirement:
+
+- configure PyPI Trusted Publishing for this GitHub repository and the
+  `.github/workflows/publish.yml` workflow
