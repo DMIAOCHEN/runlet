@@ -65,3 +65,10 @@ class CoreObjectTests(unittest.TestCase):
         self.assertIsInstance(error, RunletError)
         self.assertEqual(error.code, "context_overflow")
         self.assertEqual(str(error), "too large")
+
+    def test_errors_are_exported_from_package_root(self) -> None:
+        from runlet import ContextOverflowError as RootContextOverflowError
+        from runlet import RunletError as RootRunletError
+
+        self.assertEqual(RootRunletError.code, "runlet_error")
+        self.assertEqual(RootContextOverflowError.code, "context_overflow")
