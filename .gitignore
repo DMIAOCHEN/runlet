@@ -11,3 +11,5 @@ build/
 htmlcov/
 .coverage
 
+# Local planning and design drafts that should not be published.
+.runlet-design/
