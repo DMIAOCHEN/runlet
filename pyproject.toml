@@ -29,6 +29,9 @@ dependencies = []
 openai = [
   "openai>=1.0.0",
 ]
+anthropic = [
+  "anthropic>=0.55.0",
+]
 docs = [
   "mkdocs>=1.6.0",
   "mkdocs-material>=9.5.0",
