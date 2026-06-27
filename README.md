@@ -8,8 +8,9 @@ structured observability, and flexible hooks around model and tool execution.
 
 ## Current Status
 
-This repository is initialized with the package skeleton only. Runtime behavior
-will be added after the design spec is finalized. The API is not stable yet.
+This repository now contains an MVP runtime skeleton with core contracts,
+events, tools, hooks, context budgeting, streaming, and in-memory state. The
+API is not stable yet.
 
 ## Design Goals
 
@@ -41,6 +42,27 @@ Runlet core does not aim to provide:
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
+
+## Minimal Shape
+
+```python
+from runlet import Agent, Runtime, tool
+
+
+@tool
+async def lookup(order_id: str) -> str:
+    return f"order {order_id}"
+
+
+agent = Agent(
+    name="support",
+    instructions="Help users with orders.",
+    model=my_model_provider,
+    tools=(lookup,),
+)
+
+result = await Runtime().run(agent, "Where is order 123?")
+```
 
 ## Development
 

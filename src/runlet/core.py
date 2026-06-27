@@ -4,11 +4,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _string_map() -> dict[str, Any]:
+    return {}
+
+
+def _message_list() -> list["Message"]:
+    return []
+
+
+def _state_map() -> dict[str, Any]:
+    return {}
+
+
 @dataclass(frozen=True)
 class Message:
     role: str
     text: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_string_map)
 
     @classmethod
     def system(cls, text: str, metadata: dict[str, Any] | None = None) -> Message:
@@ -31,8 +43,8 @@ class Message:
 class ToolCall:
     id: str
     name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    arguments: dict[str, Any] = field(default_factory=_string_map)
+    metadata: dict[str, Any] = field(default_factory=_string_map)
 
 
 @dataclass(frozen=True)
@@ -40,7 +52,7 @@ class ToolResult:
     call_id: str
     name: str
     content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_string_map)
 
 
 @dataclass(frozen=True)
@@ -61,16 +73,16 @@ class Agent:
     model: Any
     tools: tuple[Any, ...] = ()
     hooks: tuple[Any, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_string_map)
 
 
 @dataclass
 class RunContext:
     run_id: str
     agent: Agent
-    messages: list[Message] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    state: dict[str, Any] = field(default_factory=dict)
+    messages: list[Message] = field(default_factory=_message_list)
+    metadata: dict[str, Any] = field(default_factory=_string_map)
+    state: dict[str, Any] = field(default_factory=_state_map)
     usage: Usage = field(default_factory=Usage)
 
 
