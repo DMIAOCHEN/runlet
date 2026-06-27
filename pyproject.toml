@@ -36,6 +36,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/DMIAOCHEN/runlet"
+Documentation = "https://dmiaochen.github.io/runlet/"
 Repository = "https://github.com/DMIAOCHEN/runlet"
 Issues = "https://github.com/DMIAOCHEN/runlet/issues"
 
