@@ -2,10 +2,10 @@ import unittest
 
 from runlet import Agent, Message, Runtime
 from runlet.core import ToolCall
-from runlet.events import InMemoryObserver
-from runlet.models import ModelResponse
+from runlet.core.events import InMemoryObserver
+from runlet.core.models import ModelResponse
+from runlet.integrations.tools import tool
 from runlet.testing import FakeModelProvider
-from runlet.tools import tool
 
 
 class RuntimeToolTests(unittest.IsolatedAsyncioTestCase):

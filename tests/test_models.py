@@ -1,7 +1,7 @@
 import unittest
 
 from runlet.core import Message, ToolCall, Usage
-from runlet.models import ModelCapabilities, ModelRequest, ModelResponse
+from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse
 from runlet.testing import FakeModelProvider, FakeStreamingModelProvider
 
 

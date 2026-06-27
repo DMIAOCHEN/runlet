@@ -4,7 +4,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from runlet.core import Message, ToolCall, Usage
+from runlet.core.messages import Message, ToolCall
+from runlet.core.runs import Usage
 
 
 def _tool_list() -> list[Any]:

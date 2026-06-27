@@ -1,10 +1,10 @@
 import unittest
 
-from runlet.context import ContextManager, SimpleTokenEstimator
 from runlet.core import Message
-from runlet.errors import ContextOverflowError
-from runlet.models import ModelCapabilities, ModelRequest
-from runlet.policies import ContextPolicy
+from runlet.core.errors import ContextOverflowError
+from runlet.core.models import ModelCapabilities, ModelRequest
+from runlet.runtime.context import ContextManager, SimpleTokenEstimator
+from runlet.runtime.policies import ContextPolicy
 
 
 class ContextTests(unittest.IsolatedAsyncioTestCase):

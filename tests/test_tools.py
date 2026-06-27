@@ -2,7 +2,7 @@ import unittest
 from typing import Any
 
 from runlet.core import ToolCall
-from runlet.tools import ToolContext, ToolSpec, execute_tool_call, tool
+from runlet.integrations import ToolContext, ToolSpec, execute_tool_call, tool
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):

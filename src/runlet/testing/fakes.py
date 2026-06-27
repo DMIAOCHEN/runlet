@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from runlet.models import ModelCapabilities, ModelRequest, ModelResponse, ModelStreamEvent
+from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ModelStreamEvent
 
 
 class FakeModelProvider:

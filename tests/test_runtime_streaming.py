@@ -1,7 +1,7 @@
 import unittest
 
 from runlet import Agent, Runtime
-from runlet.events import InMemoryObserver
+from runlet.core.events import InMemoryObserver
 from runlet.testing import FakeStreamingModelProvider
 
 

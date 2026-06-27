@@ -1,6 +1,6 @@
 import unittest
 
-from runlet.state import InMemoryStateStore, StateScope
+from runlet.runtime.state import InMemoryStateStore, StateScope
 
 
 class StateTests(unittest.IsolatedAsyncioTestCase):

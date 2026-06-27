@@ -1,6 +1,6 @@
 import unittest
 
-from runlet.events import CompositeEventSink, InMemoryObserver, RuntimeEvent
+from runlet.core.events import CompositeEventSink, InMemoryObserver, RuntimeEvent
 
 
 class EventTests(unittest.IsolatedAsyncioTestCase):

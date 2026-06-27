@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from runlet.core import ToolCall, ToolResult
+from runlet.core.messages import ToolCall, ToolResult
 
 
 ToolHandler = Callable[[dict[str, Any], "ToolContext"], Awaitable[str]]

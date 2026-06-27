@@ -2,8 +2,8 @@ import unittest
 from typing import Any
 
 from runlet import Agent, Message, Runtime
-from runlet.hooks import BaseHook, HookRunner
-from runlet.models import ModelRequest, ModelResponse
+from runlet.core.models import ModelRequest, ModelResponse
+from runlet.integrations import BaseHook, HookRunner
 from runlet.testing import FakeModelProvider
 
 

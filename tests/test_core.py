@@ -1,7 +1,7 @@
 import unittest
 
 from runlet import Agent, Message, RunContext, RunResult, ToolCall, ToolResult, Usage
-from runlet.errors import ContextOverflowError, RunletError
+from runlet.core.errors import ContextOverflowError, RunletError
 
 
 class CoreObjectTests(unittest.TestCase):

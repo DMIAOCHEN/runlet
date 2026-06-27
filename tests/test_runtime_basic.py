@@ -1,8 +1,8 @@
 import unittest
 
 from runlet import Agent, Message, Runtime
-from runlet.events import InMemoryObserver
-from runlet.models import ModelResponse
+from runlet.core.events import InMemoryObserver
+from runlet.core.models import ModelResponse
 from runlet.testing import FakeModelProvider
 
 

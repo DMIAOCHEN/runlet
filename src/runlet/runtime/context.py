@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from runlet.errors import ContextOverflowError
-from runlet.models import ModelCapabilities, ModelRequest
-from runlet.policies import ContextPolicy
+from runlet.core.errors import ContextOverflowError
+from runlet.core.models import ModelCapabilities, ModelRequest
+from runlet.runtime.policies import ContextPolicy
 
 
 @dataclass(frozen=True)

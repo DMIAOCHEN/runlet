@@ -2,27 +2,14 @@
 
 Runlet's first runtime design is an async, provider-neutral agent loop.
 
-## Modules
+## Packages
 
-- `runlet.core`: domain objects such as agents, messages, tool calls, run input,
-  run results, steps, and errors.
-- `runlet.runtime`: the execution loop that coordinates model calls, tool calls,
-  context preparation, hooks, state updates, and events.
-- `runlet.models`: model provider protocols and provider capability metadata.
-- `runlet.tools`: tool declarations, schemas, handlers, execution results, and
-  tool errors.
-- `runlet.context`: token budgeting, message reduction, compression, truncation,
-  and overflow handling.
-- `runlet.hooks`: behavior extension points around runs, steps, model calls,
-  tool calls, context compression, and state operations.
-- `runlet.events`: structured event definitions.
-- `runlet.observers`: event consumers such as console, JSONL, in-memory, and
-  OpenTelemetry adapters.
-- `runlet.state`: state store protocols and default in-memory storage.
-- `runlet.policies`: run limits, retry rules, timeout rules, context policy,
-  hook policy, and tool policy.
-- `runlet.testing`: fake providers, fake tools, event recorders, and deterministic
-  helpers for tests.
+- `runlet.core`: stable contracts such as agents, messages, run results, model
+  request and response types, events, and error classes.
+- `runlet.runtime`: runtime orchestration concerns such as the execution loop,
+  context preparation, policies, and state storage.
+- `runlet.integrations`: runtime extension surfaces such as tools and hooks.
+- `runlet.testing`: fake providers and deterministic test helpers.
 
 ## Execution Flow
 
@@ -42,4 +29,3 @@ Runlet's first runtime design is an async, provider-neutral agent loop.
 
 Runlet core does not provide an HTTP server, UI, worker queue, multi-tenant
 control plane, database migration layer, or graph workflow engine.
-
