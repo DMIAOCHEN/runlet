@@ -40,7 +40,7 @@ from runlet.runtime import (
     ToolPolicy,
 )
 
-__version__ = "0.2.0a2"
+__version__ = "0.2.0a3"
 
 __all__ = [
     "Agent",
