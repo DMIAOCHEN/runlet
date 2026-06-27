@@ -188,10 +188,10 @@ Typical release flow:
 
 1. Update the version in `pyproject.toml`
 2. Merge to `main`
-3. Create a tag such as `v0.2.0b1`
+3. Create a tag such as `v0.2.0b2`
 4. Push the tag
 
 ```bash
-git tag v0.2.0b1
-git push origin v0.2.0b1
+git tag v0.2.0b2
+git push origin v0.2.0b2
 ```
