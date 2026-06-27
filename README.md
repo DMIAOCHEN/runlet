@@ -47,5 +47,5 @@ Runlet core does not aim to provide:
 Run the current test suite:
 
 ```bash
-python3 -m unittest discover tests
+PYTHONPATH=src python3 -m unittest discover tests
 ```

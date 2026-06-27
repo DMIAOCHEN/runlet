@@ -62,7 +62,7 @@ conversation transcripts in public docs.
 - Current test command, when tests exist:
 
 ```bash
-python3 -m unittest discover tests
+PYTHONPATH=src python3 -m unittest discover tests
 ```
 
 ## Git Notes
@@ -71,4 +71,3 @@ The default branch is `main`.
 
 If commands need to write Git metadata in this environment, they may require
 escalated permissions because `.git` can appear read-only inside the sandbox.
-
