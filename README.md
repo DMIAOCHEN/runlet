@@ -64,6 +64,39 @@ agent = Agent(
 result = await Runtime().run(agent, "Where is order 123?")
 ```
 
+## OpenAI Provider
+
+Install the optional OpenAI dependency:
+
+```bash
+pip install "runlet[openai]"
+```
+
+Minimal example:
+
+```python
+from runlet import Agent, Runtime
+from runlet.providers import OpenAIResponsesProvider
+
+
+provider = OpenAIResponsesProvider(model="gpt-5.5")
+
+agent = Agent(
+    name="assistant",
+    instructions="Be helpful.",
+    model=provider,
+)
+
+result = await Runtime().run(agent, "Say hello in one sentence.")
+```
+
+Current scope of the provider:
+
+- `complete()` supported
+- `capabilities()` supported
+- `stream()` not implemented yet
+- tool messages are not supported yet
+
 ## Development
 
 Run the current test suite:

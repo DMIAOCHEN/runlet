@@ -25,6 +25,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+openai = [
+  "openai>=1.0.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/runlet/runlet"
 Repository = "https://github.com/runlet/runlet"
