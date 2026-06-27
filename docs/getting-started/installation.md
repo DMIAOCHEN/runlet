@@ -18,6 +18,20 @@ Install the optional OpenAI dependency:
 pip install "runlet[openai]"
 ```
 
+## Anthropic provider
+
+Install the optional Anthropic dependency:
+
+```bash
+pip install "runlet[anthropic]"
+```
+
+If you want both:
+
+```bash
+pip install "runlet[openai,anthropic]"
+```
+
 If you want the latest pre-release explicitly:
 
 ```bash

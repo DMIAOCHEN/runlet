@@ -12,6 +12,7 @@ adapters to expose vendor-specific controls.
 
 - `openai`
 - `openai_chat`
+- `anthropic`
 
 ## OpenAI Responses example
 
@@ -39,6 +40,26 @@ request = ModelRequest(
                 "store": False,
             },
             "temperature": 0.2,
+        },
+    },
+)
+```
+
+## Anthropic Messages example
+
+```python
+request = ModelRequest(
+    messages=[Message.user("Summarize this briefly.")],
+    options={
+        "anthropic": {
+            "max_tokens": 512,
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": 1024,
+            },
+            "metadata": {
+                "user_id": "u_123",
+            },
         },
     },
 )

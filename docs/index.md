@@ -36,6 +36,12 @@ pip install "runlet[openai]"
 pip install python-dotenv
 ```
 
+For Anthropic:
+
+```bash
+pip install "runlet[anthropic]"
+```
+
 Example `.env`:
 
 ```dotenv
@@ -83,6 +89,7 @@ asyncio.run(main())
 - [Installation](getting-started/installation.md)
 - [First Agent](getting-started/first-agent.md)
 - [OpenAI Chat Completions](getting-started/openai-chat-completions.md)
+- [Anthropic Messages](getting-started/anthropic-messages.md)
 - [Streaming](getting-started/streaming.md)
 - [Tool Calling](getting-started/tool-calling.md)
 - [Full Example](getting-started/full-example.md)

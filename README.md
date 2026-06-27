@@ -49,6 +49,12 @@ Install the OpenAI optional dependency:
 pip install "runlet[openai]"
 ```
 
+Install the Anthropic optional dependency:
+
+```bash
+pip install "runlet[anthropic]"
+```
+
 If you prefer `.env` based local development:
 
 ```bash
@@ -115,6 +121,7 @@ Start here:
 - [Installation](docs/getting-started/installation.md)
 - [First Agent](docs/getting-started/first-agent.md)
 - [OpenAI Chat Completions](docs/getting-started/openai-chat-completions.md)
+- [Anthropic Messages](docs/getting-started/anthropic-messages.md)
 - [OpenAI Responses](docs/getting-started/openai-responses.md)
 - [Streaming](docs/getting-started/streaming.md)
 - [Tool Calling](docs/getting-started/tool-calling.md)
@@ -144,13 +151,16 @@ Project background:
 
 ## Providers
 
-Runlet currently includes two OpenAI-compatible providers:
+Runlet currently includes three built-in providers:
 
 - `OpenAIChatCompletionsProvider`
 - `OpenAIResponsesProvider`
+- `AnthropicMessagesProvider`
 
 For most third-party OpenAI-compatible gateways, start with
 `OpenAIChatCompletionsProvider`. It is usually the more portable option.
+
+For Anthropic's official API, use `AnthropicMessagesProvider`.
 
 ## Project status
 
