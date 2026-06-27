@@ -32,13 +32,14 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class ToolResult:
     call_id: str
     name: str
-    output: Any
+    content: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -46,6 +47,7 @@ class ToolResult:
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    source: str = "actual"
 
     @property
     def total_tokens(self) -> int:
@@ -62,52 +64,53 @@ class Agent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclass
 class RunContext:
     run_id: str
     agent: Agent
-    messages: tuple[Message, ...] = ()
-    state: dict[str, Any] = field(default_factory=dict)
+    messages: list[Message] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
+    usage: Usage = field(default_factory=Usage)
 
 
 @dataclass(frozen=True)
 class RunResult:
     run_id: str
     status: str
-    output: Any = None
+    output: str | None = None
+    messages: tuple[Message, ...] = ()
     usage: Usage = field(default_factory=Usage)
-    error: BaseException | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
     @classmethod
     def completed(
         cls,
         run_id: str,
-        output: Any,
+        output: str,
         usage: Usage | None = None,
-        metadata: dict[str, Any] | None = None,
+        messages: tuple[Message, ...] = (),
     ) -> RunResult:
         return cls(
             run_id=run_id,
             status="completed",
             output=output,
             usage=usage or Usage(),
-            metadata=metadata or {},
+            messages=messages,
         )
 
     @classmethod
     def failed(
         cls,
         run_id: str,
-        error: BaseException,
+        error: str,
         usage: Usage | None = None,
-        metadata: dict[str, Any] | None = None,
+        messages: tuple[Message, ...] = (),
     ) -> RunResult:
         return cls(
             run_id=run_id,
             status="failed",
             usage=usage or Usage(),
             error=error,
-            metadata=metadata or {},
+            messages=messages,
         )
