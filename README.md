@@ -107,6 +107,10 @@ Provider-specific request options:
 ```python
 from runlet.core import Message
 from runlet.core.models import ModelRequest
+from runlet.providers import OpenAIResponsesProvider
+
+
+provider = OpenAIResponsesProvider(model="gpt-5.5")
 
 
 request = ModelRequest(
@@ -123,12 +127,34 @@ request = ModelRequest(
 response = await provider.complete(request)
 ```
 
+Streaming text deltas:
+
+```python
+from runlet import Agent, Runtime
+from runlet.providers import OpenAIResponsesProvider
+
+
+provider = OpenAIResponsesProvider(model="gpt-5.5")
+agent = Agent(
+    name="assistant",
+    instructions="Be helpful.",
+    model=provider,
+)
+
+async for event in Runtime().stream(agent, "Explain recursion in one sentence."):
+    if event.type == "model.stream.delta":
+        print(event.payload["delta"], end="")
+```
+
 Current scope of the provider:
 
 - `complete()` supported
 - `capabilities()` supported
-- `stream()` not implemented yet
+- text-delta `stream()` supported
+- `base_url` supported
+- `options["openai"]["extra_body"]` supported
 - tool messages are not supported yet
+- tool-call streaming is not supported yet
 
 ## Development
 

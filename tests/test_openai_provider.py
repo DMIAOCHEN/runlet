@@ -18,10 +18,15 @@ class RecordingResponsesAPI:
     def __init__(self, response: FakeOpenAIResponse) -> None:
         self._response = response
         self.calls: list[dict[str, object]] = []
+        self.stream_events: list[object] = []
 
     def create(self, **kwargs: object) -> FakeOpenAIResponse:
         self.calls.append(kwargs)
         return self._response
+
+    def stream(self, **kwargs: object):
+        self.calls.append(kwargs)
+        return self.stream_events
 
 
 class RecordingClient:
@@ -87,7 +92,7 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(capabilities.model_name, "gpt-test")
         self.assertFalse(capabilities.supports_tools)
         self.assertFalse(capabilities.supports_parallel_tool_calls)
-        self.assertFalse(capabilities.supports_streaming)
+        self.assertTrue(capabilities.supports_streaming)
         self.assertGreater(capabilities.context_window, 0)
 
     async def test_tool_messages_are_rejected(self) -> None:
@@ -99,14 +104,45 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await provider.complete(request)
 
-    async def test_stream_is_not_implemented(self) -> None:
+    async def test_stream_yields_text_deltas(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider
 
-        provider = OpenAIResponsesProvider(model="gpt-test", client=RecordingClient(FakeOpenAIResponse("ok")))
+        client = RecordingClient(FakeOpenAIResponse("ok"))
+        client.responses.stream_events = [
+            types.SimpleNamespace(type="response.created"),
+            types.SimpleNamespace(type="response.output_text.delta", delta="hel"),
+            types.SimpleNamespace(type="response.output_text.delta", delta="lo"),
+            types.SimpleNamespace(
+                type="response.completed",
+                response=types.SimpleNamespace(
+                    usage=types.SimpleNamespace(input_tokens=3, output_tokens=2),
+                ),
+            ),
+        ]
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
 
-        with self.assertRaises(NotImplementedError):
-            async for _ in provider.stream(ModelRequest(messages=[Message.user("hi")])):
-                self.fail("stream should not yield")
+        events = [event async for event in provider.stream(ModelRequest(messages=[Message.user("hi")]))]
+
+        self.assertEqual([event.delta for event in events], ["hel", "lo", ""])
+        self.assertEqual(events[-1].usage, Usage(input_tokens=3, output_tokens=2))
+
+    async def test_stream_forwards_openai_extra_body_options(self) -> None:
+        from runlet.providers.openai import OpenAIResponsesProvider
+
+        client = RecordingClient(FakeOpenAIResponse("ok"))
+        client.responses.stream_events = []
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
+        request = ModelRequest(
+            messages=[Message.user("Hi")],
+            options={"openai": {"extra_body": {"reasoning": {"effort": "low"}}}},
+        )
+
+        _ = [event async for event in provider.stream(request)]
+
+        self.assertEqual(
+            client.responses.calls[0]["extra_body"],
+            {"reasoning": {"effort": "low"}},
+        )
 
     def test_missing_openai_dependency_raises_helpful_error(self) -> None:
         sys.modules.pop("openai", None)
