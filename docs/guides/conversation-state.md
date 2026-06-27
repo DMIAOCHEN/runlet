@@ -73,3 +73,6 @@ its intended scope.
 ## Next step
 
 See [Runtime Boundary](../concepts/runtime-boundary.md).
+
+For a runnable end-to-end example, see
+[Full Example](../getting-started/full-example.md).

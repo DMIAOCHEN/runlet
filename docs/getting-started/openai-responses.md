@@ -28,7 +28,7 @@ async def main() -> None:
         model=provider,
     )
 
-    result = await Runtime().run(agent, "用一句中文介绍 Runlet。")
+    result = await Runtime().run(agent, "Introduce Runlet in one sentence.")
     print(result.output)
 
 

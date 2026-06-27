@@ -23,7 +23,7 @@ async def main() -> None:
         model=provider,
     )
 
-    async for event in Runtime().stream(agent, "用两句中文解释什么是流式输出。"):
+    async for event in Runtime().stream(agent, "Explain streaming output in two sentences."):
         if event.type == "model.stream.delta":
             print(event.payload["delta"], end="")
 

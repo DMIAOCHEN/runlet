@@ -44,19 +44,39 @@ Install the OpenAI optional dependency:
 pip install "runlet[openai]"
 ```
 
+If you prefer `.env` based local development:
+
+```bash
+pip install python-dotenv
+```
+
+Example `.env`:
+
+```dotenv
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-endpoint.example/v1
+OPENAI_MODEL=qwen-plus
+```
+
 Minimal example:
 
 ```python
 import asyncio
+import os
+
+from dotenv import load_dotenv
 
 from runlet import Agent, Runtime
 from runlet.providers import OpenAIChatCompletionsProvider
 
 
 async def main() -> None:
+    load_dotenv()
+
     provider = OpenAIChatCompletionsProvider(
-        model="gpt-4o-mini",
-        api_key="your-api-key",
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url=os.environ.get("OPENAI_BASE_URL"),
     )
 
     agent = Agent(
@@ -93,6 +113,7 @@ Start here:
 - [OpenAI Responses](docs/getting-started/openai-responses.md)
 - [Streaming](docs/getting-started/streaming.md)
 - [Tool Calling](docs/getting-started/tool-calling.md)
+- [Full Example](docs/getting-started/full-example.md)
 
 Guides:
 

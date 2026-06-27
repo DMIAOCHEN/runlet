@@ -30,7 +30,7 @@ agent = Agent(
 ## Non-streaming execution
 
 ```python
-result = await Runtime().run(agent, "请帮我查询订单 12345。")
+result = await Runtime().run(agent, "Check order 12345.")
 print(result.output)
 ```
 
@@ -46,7 +46,7 @@ If the model returns tool calls, Runlet will:
 The same loop works in `Runtime.stream()` and `Runtime.stream_request()`.
 
 ```python
-async for event in Runtime().stream(agent, "请帮我查询订单 12345，并告诉我当前状态。"):
+async for event in Runtime().stream(agent, "Check order 12345 and tell me its current status."):
     if event.type == "model.stream.delta":
         print(event.payload["delta"], end="")
 ```

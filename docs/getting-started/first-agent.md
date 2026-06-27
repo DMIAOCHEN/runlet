@@ -11,15 +11,21 @@ the final output.
 
 ```python
 import asyncio
+import os
+
+from dotenv import load_dotenv
 
 from runlet import Agent, Runtime
 from runlet.providers import OpenAIChatCompletionsProvider
 
 
 async def main() -> None:
+    load_dotenv()
+
     provider = OpenAIChatCompletionsProvider(
-        model="gpt-4o-mini",
-        api_key="your-api-key",
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url=os.environ.get("OPENAI_BASE_URL"),
     )
 
     agent = Agent(
@@ -29,11 +35,19 @@ async def main() -> None:
     )
 
     runtime = Runtime()
-    result = await runtime.run(agent, "用一句中文介绍 Runlet。")
+    result = await runtime.run(agent, "Introduce Runlet in one sentence.")
     print(result.output)
 
 
 asyncio.run(main())
+```
+
+Example `.env`:
+
+```dotenv
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-endpoint.example/v1
+OPENAI_MODEL=qwen-plus
 ```
 
 ## Key objects
@@ -53,3 +67,4 @@ asyncio.run(main())
 
 - [OpenAI Chat Completions](openai-chat-completions.md)
 - [Streaming](streaming.md)
+- [Full Example](full-example.md)
