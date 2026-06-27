@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterable
 from importlib import import_module
 import json
-from typing import Any, Callable, cast
+from typing import Any, Callable, ContextManager, cast
 
 from runlet.core.messages import Message
 from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ProviderStreamEvent
@@ -31,19 +31,19 @@ class OpenAIResponsesProvider:
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderStreamEvent]:
         stream_method = cast(
-            Callable[..., Iterable[object]] | None,
+            Callable[..., object] | None,
             getattr(self._client.responses, "stream", None),
         )
         if callable(stream_method):
-            stream: Iterable[object] = stream_method(**self._build_create_kwargs(request))
+            stream_result = stream_method(**self._build_create_kwargs(request))
         else:
-            stream = cast(
+            stream_result = cast(
                 Iterable[object],
                 self._client.responses.create(**self._build_create_kwargs(request), stream=True),
             )
 
         tool_names: dict[str, str] = {}
-        for event in stream:
+        for event in self._iter_stream_events(stream_result):
             event_type = getattr(event, "type", "")
             if event_type == "response.output_text.delta":
                 yield ProviderStreamEvent.text_delta(str(getattr(event, "delta", "")), raw=event)
@@ -154,3 +154,10 @@ class OpenAIResponsesProvider:
         if not isinstance(arguments, str) or not arguments:
             return {}
         return cast(dict[str, Any], json.loads(arguments))
+
+    def _iter_stream_events(self, stream_result: object) -> Iterable[object]:
+        if hasattr(stream_result, "__enter__") and hasattr(stream_result, "__exit__"):
+            with cast(ContextManager[Iterable[object]], stream_result) as managed_stream:
+                yield from managed_stream
+            return
+        yield from cast(Iterable[object], stream_result)

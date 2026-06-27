@@ -72,6 +72,12 @@ Install the optional OpenAI dependency:
 pip install "runlet[openai]"
 ```
 
+Install the latest pre-release explicitly:
+
+```bash
+pip install --pre "runlet[openai]"
+```
+
 Minimal example:
 
 ```python
@@ -208,7 +214,7 @@ Release flow:
 
 1. Update `[project].version` in `pyproject.toml`
 2. Merge the release commit to `main`
-3. Create a version tag such as `v0.1.0`
+3. Create a version tag such as `v0.2.0a1`
 4. Push the tag to GitHub
 
 The publish workflow will:
@@ -222,8 +228,8 @@ The publish workflow will:
 Example:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0a1
+git push origin v0.2.0a1
 ```
 
 Repository setup requirement:
