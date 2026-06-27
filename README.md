@@ -1,5 +1,10 @@
 # Runlet
 
+[![PyPI version](https://img.shields.io/pypi/v/runlet.svg)](https://pypi.org/project/runlet/)
+[![Python versions](https://img.shields.io/pypi/pyversions/runlet.svg)](https://pypi.org/project/runlet/)
+[![CI](https://github.com/DMIAOCHEN/runlet/actions/workflows/ci.yml/badge.svg)](https://github.com/DMIAOCHEN/runlet/actions/workflows/ci.yml)
+[![Docs](https://github.com/DMIAOCHEN/runlet/actions/workflows/docs.yml/badge.svg)](https://github.com/DMIAOCHEN/runlet/actions/workflows/docs.yml)
+
 Runlet is a small, provider-neutral Python agent runtime library.
 
 It is designed for applications that want explicit control over model calls,
@@ -149,7 +154,7 @@ For most third-party OpenAI-compatible gateways, start with
 
 ## Project status
 
-Runlet is currently pre-alpha. The API is not stable yet.
+Runlet is currently in beta. The API may still evolve before a stable 0.x release.
 
 ## Development
 
@@ -173,10 +178,10 @@ Typical release flow:
 
 1. Update the version in `pyproject.toml`
 2. Merge to `main`
-3. Create a tag such as `v0.2.0a3`
+3. Create a tag such as `v0.2.0b1`
 4. Push the tag
 
 ```bash
-git tag v0.2.0a3
-git push origin v0.2.0a3
+git tag v0.2.0b1
+git push origin v0.2.0b1
 ```
