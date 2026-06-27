@@ -26,6 +26,19 @@ class Runtime:
         self.policy = policy or RunPolicy()
 
     async def run(self, agent: Agent, input: str) -> RunResult:
+        return await self.run_request(
+            agent,
+            ModelRequest(messages=[Message.system(agent.instructions), Message.user(input)]),
+            input=input,
+        )
+
+    async def run_request(
+        self,
+        agent: Agent,
+        request: ModelRequest,
+        *,
+        input: str | None = None,
+    ) -> RunResult:
         run_id = f"run_{uuid4().hex}"
         hook_runner = HookRunner(agent.hooks)
         await self.event_sink.emit(
@@ -33,18 +46,19 @@ class Runtime:
                 type="run.started",
                 run_id=run_id,
                 agent_name=agent.name,
-                payload={"input": input},
+                payload={"input": input if input is not None else self._request_input_text(request)},
             )
         )
 
-        messages = [Message.system(agent.instructions), Message.user(input)]
-        tools = {tool_spec.name: tool_spec for tool_spec in agent.tools if isinstance(tool_spec, ToolSpec)}
+        request = self._merge_request_defaults(agent, request)
+        messages = list(request.messages)
+        tools = {tool_spec.name: tool_spec for tool_spec in request.tools if isinstance(tool_spec, ToolSpec)}
 
         for _ in range(self.policy.max_steps):
-            request = ModelRequest(messages=list(messages), tools=list(tools.values()))
-            request = await hook_runner.before_model_request(request, None)
+            step_request = self._step_request_from_state(request, messages, tools)
+            step_request = await hook_runner.before_model_request(step_request, None)
             capabilities = await agent.model.capabilities()
-            prepared = await self.context_manager.prepare(request, capabilities)
+            prepared = await self.context_manager.prepare(step_request, capabilities)
             await self.event_sink.emit(
                 RuntimeEvent(
                     type="context.budget_checked",
@@ -53,9 +67,8 @@ class Runtime:
                     payload={"input_tokens": prepared.estimate.input_tokens},
                 )
             )
-            request = prepared.request
             await self.event_sink.emit(RuntimeEvent(type="model.requested", run_id=run_id, agent_name=agent.name))
-            response = await agent.model.complete(request)
+            response = await agent.model.complete(prepared.request)
             response = await hook_runner.after_model_response(response, None)
             await self.event_sink.emit(
                 RuntimeEvent(
@@ -67,6 +80,17 @@ class Runtime:
             )
 
             if response.tool_calls:
+                messages.append(
+                    Message.assistant(
+                        response.message.text,
+                        metadata={
+                            "tool_calls": [
+                                {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+                                for call in response.tool_calls
+                            ]
+                        },
+                    )
+                )
                 for call in response.tool_calls:
                     call = await hook_runner.before_tool_call(call, None)
                     await self.event_sink.emit(
@@ -118,24 +142,40 @@ class Runtime:
         return result
 
     async def stream(self, agent: Agent, input: str):
+        async for event in self.stream_request(
+            agent,
+            ModelRequest(messages=[Message.system(agent.instructions), Message.user(input)]),
+            input=input,
+        ):
+            yield event
+
+    async def stream_request(
+        self,
+        agent: Agent,
+        request: ModelRequest,
+        *,
+        input: str | None = None,
+    ):
         run_id = f"run_{uuid4().hex}"
         hook_runner = HookRunner(agent.hooks)
-        messages = [Message.system(agent.instructions), Message.user(input)]
-        tools = {tool_spec.name: tool_spec for tool_spec in agent.tools if isinstance(tool_spec, ToolSpec)}
         await self.event_sink.emit(
             RuntimeEvent(
                 type="run.started",
                 run_id=run_id,
                 agent_name=agent.name,
-                payload={"input": input},
+                payload={"input": input if input is not None else self._request_input_text(request)},
             )
         )
 
+        request = self._merge_request_defaults(agent, request)
+        messages = list(request.messages)
+        tools = {tool_spec.name: tool_spec for tool_spec in request.tools if isinstance(tool_spec, ToolSpec)}
+
         for _ in range(self.policy.max_steps):
-            request = ModelRequest(messages=list(messages), tools=list(tools.values()))
-            request = await hook_runner.before_model_request(request, None)
+            step_request = self._step_request_from_state(request, messages, tools)
+            step_request = await hook_runner.before_model_request(step_request, None)
             capabilities = await agent.model.capabilities()
-            prepared = await self.context_manager.prepare(request, capabilities)
+            prepared = await self.context_manager.prepare(step_request, capabilities)
             await self.event_sink.emit(
                 RuntimeEvent(
                     type="context.budget_checked",
@@ -155,8 +195,12 @@ class Runtime:
 
             saw_message_completed = False
             executed_tool = False
+            collected_deltas: list[str] = []
+            completed_tool_calls: list[dict[str, object]] = []
+            pending_tool_messages: list[Message] = []
             async for step_event in self._iter_provider_stream_events(agent.model.stream(prepared.request)):
                 if step_event.kind == "text_delta" and step_event.delta:
+                    collected_deltas.append(step_event.delta)
                     event = RuntimeEvent(
                         type="model.stream.delta",
                         run_id=run_id,
@@ -170,6 +214,9 @@ class Runtime:
                 if step_event.kind == "tool_call_completed" and step_event.call_id and step_event.name:
                     call = ToolCall(id=step_event.call_id, name=step_event.name, arguments=step_event.arguments)
                     call = await hook_runner.before_tool_call(call, None)
+                    completed_tool_calls.append(
+                        {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+                    )
                     await self.event_sink.emit(
                         RuntimeEvent(
                             type="tool.started",
@@ -188,7 +235,7 @@ class Runtime:
                             payload={"name": result.name},
                         )
                     )
-                    messages.append(
+                    pending_tool_messages.append(
                         Message.tool(
                             result.content,
                             metadata={"tool_call_id": result.call_id, "name": result.name},
@@ -209,6 +256,10 @@ class Runtime:
             )
 
             if executed_tool:
+                messages.append(
+                    Message.assistant("".join(collected_deltas), metadata={"tool_calls": completed_tool_calls})
+                )
+                messages.extend(pending_tool_messages)
                 continue
 
             if saw_message_completed:
@@ -253,3 +304,36 @@ class Runtime:
             if chunk.final:
                 yield ProviderStreamEvent.message_completed(raw=chunk.raw)
                 yield ProviderStreamEvent.completed(raw=chunk.raw)
+
+    def _merge_request_defaults(self, agent: Agent, request: ModelRequest) -> ModelRequest:
+        if request.messages and request.messages[0].role == "system":
+            messages = list(request.messages)
+        else:
+            messages = [Message.system(agent.instructions), *request.messages]
+
+        tools = list(request.tools) if request.tools else [tool for tool in agent.tools if isinstance(tool, ToolSpec)]
+        return ModelRequest(
+            messages=messages,
+            tools=tools,
+            metadata=dict(request.metadata),
+            options=dict(request.options),
+        )
+
+    def _step_request_from_state(
+        self,
+        base_request: ModelRequest,
+        messages: list[Message],
+        tools: dict[str, ToolSpec],
+    ) -> ModelRequest:
+        return ModelRequest(
+            messages=list(messages),
+            tools=list(tools.values()),
+            metadata=dict(base_request.metadata),
+            options=dict(base_request.options),
+        )
+
+    def _request_input_text(self, request: ModelRequest) -> str:
+        for message in reversed(request.messages):
+            if message.role == "user":
+                return message.text
+        return ""

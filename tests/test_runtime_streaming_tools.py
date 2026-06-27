@@ -85,7 +85,17 @@ class RuntimeStreamingToolTests(unittest.IsolatedAsyncioTestCase):
             ["Checking order ", "Shipped via warehouse ", "A and arriving tomorrow."],
         )
         self.assertEqual(len(model.requests), 3)
+        self.assertEqual(model.requests[1].messages[-2].role, "assistant")
+        self.assertEqual(
+            model.requests[1].messages[-2].metadata["tool_calls"],
+            [{"id": "call_1", "name": "lookup_order", "arguments": {"order_id": "123"}}],
+        )
         self.assertEqual(model.requests[1].messages[-1].role, "tool")
+        self.assertEqual(model.requests[2].messages[-2].role, "assistant")
+        self.assertEqual(
+            model.requests[2].messages[-2].metadata["tool_calls"],
+            [{"id": "call_2", "name": "lookup_warehouse", "arguments": {"warehouse_id": "w1"}}],
+        )
         self.assertEqual(model.requests[2].messages[-1].role, "tool")
         self.assertIn("tool.started", [event.type for event in observer.events])
         self.assertIn("tool.completed", [event.type for event in observer.events])

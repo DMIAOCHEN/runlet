@@ -5,7 +5,7 @@ from importlib import import_module
 import json
 from typing import Any, Callable, ContextManager, cast
 
-from runlet.core.messages import Message
+from runlet.core.messages import Message, ToolCall
 from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ProviderStreamEvent
 from runlet.core.runs import Usage
 
@@ -25,6 +25,7 @@ class OpenAIResponsesProvider:
         response = self._client.responses.create(**self._build_create_kwargs(request))
         return ModelResponse(
             message=Message.assistant(response.output_text),
+            tool_calls=self._tool_calls_from_response(response),
             usage=self._usage_from_response(response),
             raw=response,
         )
@@ -42,7 +43,8 @@ class OpenAIResponsesProvider:
                 self._client.responses.create(**self._build_create_kwargs(request), stream=True),
             )
 
-        tool_names: dict[str, str] = {}
+        tool_items: dict[str, dict[str, str]] = {}
+        completed_tool_calls: set[str] = set()
         for event in self._iter_stream_events(stream_result):
             event_type = getattr(event, "type", "")
             if event_type == "response.output_text.delta":
@@ -54,16 +56,19 @@ class OpenAIResponsesProvider:
                 if getattr(item, "type", "") == "function_call":
                     item_id = str(getattr(item, "id", "") or "")
                     item_name = str(getattr(item, "name", "") or "")
-                    if item_id and item_name:
-                        tool_names[item_id] = item_name
+                    item_call_id = str(getattr(item, "call_id", "") or item_id)
+                    if item_id and item_name and item_call_id:
+                        tool_items[item_id] = {"name": item_name, "call_id": item_call_id}
                 continue
 
             if event_type == "response.function_call_arguments.delta":
                 call_id = str(getattr(event, "item_id", "") or "")
-                if call_id:
+                item = tool_items.get(call_id, {})
+                resolved_call_id = item.get("call_id", call_id)
+                if resolved_call_id:
                     yield ProviderStreamEvent.tool_call_delta(
-                        call_id=call_id,
-                        name=tool_names.get(call_id),
+                        call_id=resolved_call_id,
+                        name=item.get("name"),
                         arguments_delta=str(getattr(event, "delta", "")),
                         raw=event,
                     )
@@ -71,10 +76,13 @@ class OpenAIResponsesProvider:
 
             if event_type == "response.function_call_arguments.done":
                 call_id = str(getattr(event, "item_id", "") or "")
-                if call_id:
+                item = tool_items.get(call_id, {})
+                resolved_call_id = item.get("call_id", call_id)
+                if resolved_call_id and resolved_call_id not in completed_tool_calls:
+                    completed_tool_calls.add(resolved_call_id)
                     yield ProviderStreamEvent.tool_call_completed(
-                        call_id=call_id,
-                        name=tool_names.get(call_id, ""),
+                        call_id=resolved_call_id,
+                        name=item.get("name", ""),
                         arguments=self._parse_arguments(getattr(event, "arguments", "")),
                         raw=event,
                     )
@@ -83,9 +91,11 @@ class OpenAIResponsesProvider:
             if event_type == "response.output_item.done":
                 item = getattr(event, "item", None)
                 if getattr(item, "type", "") == "function_call":
-                    call_id = str(getattr(item, "id", "") or "")
-                    name = str(getattr(item, "name", "") or tool_names.get(call_id, ""))
-                    if call_id and name:
+                    item_id = str(getattr(item, "id", "") or "")
+                    call_id = str(getattr(item, "call_id", "") or tool_items.get(item_id, {}).get("call_id", item_id))
+                    name = str(getattr(item, "name", "") or tool_items.get(item_id, {}).get("name", ""))
+                    if call_id and name and call_id not in completed_tool_calls:
+                        completed_tool_calls.add(call_id)
                         yield ProviderStreamEvent.tool_call_completed(
                             call_id=call_id,
                             name=name,
@@ -106,7 +116,7 @@ class OpenAIResponsesProvider:
         return ModelCapabilities(
             model_name=self.model,
             context_window=128_000,
-            supports_tools=False,
+            supports_tools=True,
             supports_parallel_tool_calls=False,
             supports_streaming=True,
         )
@@ -120,11 +130,20 @@ class OpenAIResponsesProvider:
             ) from exc
         return openai_module.OpenAI(api_key=api_key, base_url=base_url)
 
-    def _build_input(self, request: ModelRequest) -> list[dict[str, str]]:
-        payload: list[dict[str, str]] = []
+    def _build_input(self, request: ModelRequest) -> list[dict[str, Any]]:
+        payload: list[dict[str, Any]] = []
         for message in request.messages:
             if message.role == "tool":
-                raise ValueError("OpenAIResponsesProvider does not support tool messages in v1")
+                payload.append(self._tool_output_item_from_message(message))
+                continue
+
+            tool_calls = message.metadata.get("tool_calls")
+            if message.role == "assistant" and isinstance(tool_calls, list):
+                if message.text:
+                    payload.append({"role": message.role, "content": message.text})
+                payload.extend(self._assistant_tool_call_items(cast(list[dict[str, Any]], tool_calls)))
+                continue
+
             payload.append({"role": message.role, "content": message.text})
         return payload
 
@@ -133,6 +152,9 @@ class OpenAIResponsesProvider:
             "model": self.model,
             "input": self._build_input(request),
         }
+        tools = self._build_tools(request)
+        if tools:
+            create_kwargs["tools"] = tools
         openai_options = request.options.get("openai", {})
         extra_body = openai_options.get("extra_body")
         if extra_body is not None:
@@ -154,6 +176,59 @@ class OpenAIResponsesProvider:
         if not isinstance(arguments, str) or not arguments:
             return {}
         return cast(dict[str, Any], json.loads(arguments))
+
+    def _tool_calls_from_response(self, response: Any) -> list[ToolCall]:
+        tool_calls: list[ToolCall] = []
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", "") != "function_call":
+                continue
+            tool_calls.append(
+                ToolCall(
+                    id=str(getattr(item, "call_id", "") or getattr(item, "id", "") or ""),
+                    name=str(getattr(item, "name", "") or ""),
+                    arguments=self._parse_arguments(getattr(item, "arguments", "")),
+                )
+            )
+        return tool_calls
+
+    def _assistant_tool_call_items(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for tool_call in tool_calls:
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": str(tool_call.get("id", "") or ""),
+                    "name": str(tool_call.get("name", "") or ""),
+                    "arguments": json.dumps(tool_call.get("arguments", {}), separators=(",", ":")),
+                }
+            )
+        return items
+
+    def _tool_output_item_from_message(self, message: Message) -> dict[str, Any]:
+        call_id = str(message.metadata.get("tool_call_id", "") or "")
+        if not call_id:
+            raise ValueError("OpenAIResponsesProvider tool messages require metadata.tool_call_id")
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": message.text,
+        }
+
+    def _build_tools(self, request: ModelRequest) -> list[dict[str, Any]]:
+        tools: list[dict[str, Any]] = []
+        for tool in request.tools:
+            name = getattr(tool, "name", "")
+            if not name:
+                continue
+            tools.append(
+                {
+                    "type": "function",
+                    "name": str(name),
+                    "description": str(getattr(tool, "description", "") or ""),
+                    "parameters": cast(dict[str, Any], getattr(tool, "input_schema", {})),
+                }
+            )
+        return tools
 
     def _iter_stream_events(self, stream_result: object) -> Iterable[object]:
         if hasattr(stream_result, "__enter__") and hasattr(stream_result, "__exit__"):

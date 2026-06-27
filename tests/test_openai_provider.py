@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from typing import Any, cast
 from unittest.mock import patch
 
 from runlet.core import Message
@@ -9,8 +10,15 @@ from runlet.core.runs import Usage
 
 
 class FakeOpenAIResponse:
-    def __init__(self, output_text: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
+    def __init__(
+        self,
+        output_text: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        output: list[object] | None = None,
+    ) -> None:
         self.output_text = output_text
+        self.output = output or []
         self.usage = types.SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
@@ -122,19 +130,100 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         capabilities = await provider.capabilities()
 
         self.assertEqual(capabilities.model_name, "gpt-test")
-        self.assertFalse(capabilities.supports_tools)
+        self.assertTrue(capabilities.supports_tools)
         self.assertFalse(capabilities.supports_parallel_tool_calls)
         self.assertTrue(capabilities.supports_streaming)
         self.assertGreater(capabilities.context_window, 0)
 
-    async def test_tool_messages_are_rejected(self) -> None:
+    async def test_provider_maps_tools_and_tool_messages(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider
 
-        provider = OpenAIResponsesProvider(model="gpt-test", client=RecordingClient(FakeOpenAIResponse("ok")))
-        request = ModelRequest(messages=[Message.tool("tool output")])
+        fake_response = FakeOpenAIResponse("ok")
+        client = RecordingClient(fake_response)
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
+        request = ModelRequest(
+            messages=[
+                Message.system("Be helpful."),
+                Message.user("Check order 123."),
+                Message.assistant(
+                    "",
+                    metadata={
+                        "tool_calls": [
+                            {"id": "call_1", "name": "lookup_order", "arguments": {"order_id": "123"}}
+                        ]
+                    },
+                ),
+                Message.tool("order 123 shipped", metadata={"tool_call_id": "call_1", "name": "lookup_order"}),
+            ],
+            tools=[
+                types.SimpleNamespace(
+                    name="lookup_order",
+                    description="Look up an order.",
+                    input_schema={
+                        "type": "object",
+                        "required": ["order_id"],
+                        "properties": {"order_id": {"type": "string"}},
+                    },
+                )
+            ],
+        )
 
-        with self.assertRaises(ValueError):
-            await provider.complete(request)
+        await provider.complete(request)
+
+        input_items = cast(list[dict[str, Any]], client.responses.calls[0]["input"])
+        self.assertEqual(
+            client.responses.calls[0]["tools"],
+            [
+                {
+                    "type": "function",
+                    "name": "lookup_order",
+                    "description": "Look up an order.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["order_id"],
+                        "properties": {"order_id": {"type": "string"}},
+                    },
+                }
+            ],
+        )
+        self.assertEqual(
+            input_items[-2:],
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup_order",
+                    "arguments": '{"order_id":"123"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "order 123 shipped",
+                },
+            ],
+        )
+
+    async def test_complete_parses_function_call_output_items(self) -> None:
+        from runlet.providers.openai import OpenAIResponsesProvider
+
+        fake_response = FakeOpenAIResponse(
+            "",
+            output=[
+                types.SimpleNamespace(
+                    type="function_call",
+                    call_id="call_1",
+                    name="lookup_order",
+                    arguments='{"order_id":"123"}',
+                )
+            ],
+        )
+        provider = OpenAIResponsesProvider(model="gpt-test", client=RecordingClient(fake_response))
+
+        response = await provider.complete(ModelRequest(messages=[Message.user("Check order 123.")]))
+
+        self.assertEqual(response.tool_calls[0].id, "call_1")
+        self.assertEqual(response.tool_calls[0].name, "lookup_order")
+        self.assertEqual(response.tool_calls[0].arguments, {"order_id": "123"})
 
     async def test_stream_yields_text_deltas(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider
@@ -209,6 +298,40 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].arguments_delta, '{"order_id":"12')
         self.assertEqual(events[1].kind, "tool_call_completed")
         self.assertEqual(events[1].arguments, {"order_id": "123"})
+
+    async def test_stream_deduplicates_tool_call_completed_events(self) -> None:
+        from runlet.providers.openai import OpenAIResponsesProvider
+
+        client = RecordingClient(FakeOpenAIResponse("ok"))
+        client.responses.stream_events = [
+            types.SimpleNamespace(
+                type="response.output_item.added",
+                item=types.SimpleNamespace(id="item_1", call_id="call_1", type="function_call", name="lookup"),
+            ),
+            types.SimpleNamespace(
+                type="response.function_call_arguments.done",
+                item_id="item_1",
+                arguments='{"order_id":"123"}',
+            ),
+            types.SimpleNamespace(
+                type="response.output_item.done",
+                item=types.SimpleNamespace(
+                    id="item_1",
+                    call_id="call_1",
+                    type="function_call",
+                    name="lookup",
+                    arguments='{"order_id":"123"}',
+                ),
+            ),
+            types.SimpleNamespace(type="response.completed"),
+        ]
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
+
+        events = [event async for event in provider.stream(ModelRequest(messages=[Message.user("hi")]))]
+
+        completed_events = [event for event in events if event.kind == "tool_call_completed"]
+        self.assertEqual(len(completed_events), 1)
+        self.assertEqual(completed_events[0].call_id, "call_1")
 
     async def test_stream_forwards_openai_extra_body_options(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider
