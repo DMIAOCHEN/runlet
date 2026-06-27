@@ -90,6 +90,39 @@ agent = Agent(
 result = await Runtime().run(agent, "Say hello in one sentence.")
 ```
 
+Custom base URL:
+
+```python
+from runlet.providers import OpenAIResponsesProvider
+
+
+provider = OpenAIResponsesProvider(
+    model="gpt-5.5",
+    base_url="https://your-endpoint.example/v1",
+)
+```
+
+Provider-specific request options:
+
+```python
+from runlet.core import Message
+from runlet.core.models import ModelRequest
+
+
+request = ModelRequest(
+    messages=[Message.user("Summarize this briefly.")],
+    options={
+        "openai": {
+            "extra_body": {
+                "reasoning": {"effort": "medium"},
+            },
+        },
+    },
+)
+
+response = await provider.complete(request)
+```
+
 Current scope of the provider:
 
 - `complete()` supported

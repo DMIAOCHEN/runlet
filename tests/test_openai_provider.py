@@ -59,6 +59,24 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_provider_forwards_openai_extra_body_options(self) -> None:
+        from runlet.providers.openai import OpenAIResponsesProvider
+
+        fake_response = FakeOpenAIResponse("hello back")
+        client = RecordingClient(fake_response)
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
+        request = ModelRequest(
+            messages=[Message.user("Hi")],
+            options={"openai": {"extra_body": {"reasoning": {"effort": "medium"}}}},
+        )
+
+        await provider.complete(request)
+
+        self.assertEqual(
+            client.responses.calls[0]["extra_body"],
+            {"reasoning": {"effort": "medium"}},
+        )
+
     async def test_capabilities_are_conservative(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider
 
@@ -98,3 +116,28 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
             with self.assertRaisesRegex(RuntimeError, "pip install .*openai"):
                 OpenAIResponsesProvider(model="gpt-test")
+
+    def test_provider_passes_base_url_to_sdk_client(self) -> None:
+        recording_calls: list[dict[str, object]] = []
+
+        class FakeSDKClient:
+            def __init__(self, **kwargs: object) -> None:
+                recording_calls.append(kwargs)
+                self.responses = RecordingResponsesAPI(FakeOpenAIResponse("ok"))
+
+        fake_module = types.SimpleNamespace(OpenAI=FakeSDKClient)
+        sys.modules.pop("openai", None)
+
+        with patch("runlet.providers.openai.import_module", return_value=fake_module):
+            from runlet.providers.openai import OpenAIResponsesProvider
+
+            OpenAIResponsesProvider(
+                model="gpt-test",
+                api_key="secret",
+                base_url="https://example.test/v1",
+            )
+
+        self.assertEqual(
+            recording_calls[0],
+            {"api_key": "secret", "base_url": "https://example.test/v1"},
+        )

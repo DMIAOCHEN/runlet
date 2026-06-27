@@ -13,14 +13,23 @@ class OpenAIResponsesProvider:
         self,
         model: str,
         api_key: str | None = None,
+        base_url: str | None = None,
         client: Any | None = None,
     ) -> None:
         self.model = model
-        self._client = client or self._build_client(api_key=api_key)
+        self._client = client or self._build_client(api_key=api_key, base_url=base_url)
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         payload = self._build_input(request)
-        response = self._client.responses.create(model=self.model, input=payload)
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": payload,
+        }
+        openai_options = request.options.get("openai", {})
+        extra_body = openai_options.get("extra_body")
+        if extra_body is not None:
+            create_kwargs["extra_body"] = extra_body
+        response = self._client.responses.create(**create_kwargs)
         return ModelResponse(
             message=Message.assistant(response.output_text),
             usage=self._usage_from_response(response),
@@ -41,14 +50,14 @@ class OpenAIResponsesProvider:
             supports_streaming=False,
         )
 
-    def _build_client(self, api_key: str | None) -> Any:
+    def _build_client(self, api_key: str | None, base_url: str | None) -> Any:
         try:
             openai_module = import_module("openai")
         except ImportError as exc:
             raise RuntimeError(
                 "OpenAIResponsesProvider requires the 'openai' package. Install it with 'pip install openai'."
             ) from exc
-        return openai_module.OpenAI(api_key=api_key)
+        return openai_module.OpenAI(api_key=api_key, base_url=base_url)
 
     def _build_input(self, request: ModelRequest) -> list[dict[str, str]]:
         payload: list[dict[str, str]] = []
