@@ -123,8 +123,41 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         events = [event async for event in provider.stream(ModelRequest(messages=[Message.user("hi")]))]
 
-        self.assertEqual([event.delta for event in events], ["hel", "lo", ""])
-        self.assertEqual(events[-1].usage, Usage(input_tokens=3, output_tokens=2))
+        self.assertEqual([event.kind for event in events], ["text_delta", "text_delta", "usage", "message_completed", "completed"])
+        self.assertEqual([event.delta for event in events if event.kind == "text_delta"], ["hel", "lo"])
+        self.assertEqual(events[2].usage, Usage(input_tokens=3, output_tokens=2))
+
+    async def test_stream_yields_tool_call_events(self) -> None:
+        from runlet.providers.openai import OpenAIResponsesProvider
+
+        client = RecordingClient(FakeOpenAIResponse("ok"))
+        client.responses.stream_events = [
+            types.SimpleNamespace(
+                type="response.output_item.added",
+                item=types.SimpleNamespace(id="call_1", type="function_call", name="lookup"),
+            ),
+            types.SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="call_1",
+                delta='{"order_id":"12',
+            ),
+            types.SimpleNamespace(
+                type="response.function_call_arguments.done",
+                item_id="call_1",
+                arguments='{"order_id":"123"}',
+            ),
+            types.SimpleNamespace(type="response.completed"),
+        ]
+        provider = OpenAIResponsesProvider(model="gpt-test", client=client)
+
+        events = [event async for event in provider.stream(ModelRequest(messages=[Message.user("hi")]))]
+
+        self.assertEqual(events[0].kind, "tool_call_delta")
+        self.assertEqual(events[0].call_id, "call_1")
+        self.assertEqual(events[0].name, "lookup")
+        self.assertEqual(events[0].arguments_delta, '{"order_id":"12')
+        self.assertEqual(events[1].kind, "tool_call_completed")
+        self.assertEqual(events[1].arguments, {"order_id": "123"})
 
     async def test_stream_forwards_openai_extra_body_options(self) -> None:
         from runlet.providers.openai import OpenAIResponsesProvider

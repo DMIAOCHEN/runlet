@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable
 from importlib import import_module
+import json
 from typing import Any, Callable, cast
 
 from runlet.core.messages import Message
-from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ModelStreamEvent
+from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ProviderStreamEvent
 from runlet.core.runs import Usage
 
 
@@ -28,7 +29,7 @@ class OpenAIResponsesProvider:
             raw=response,
         )
 
-    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderStreamEvent]:
         stream_method = cast(
             Callable[..., Iterable[object]] | None,
             getattr(self._client.responses, "stream", None),
@@ -41,15 +42,65 @@ class OpenAIResponsesProvider:
                 self._client.responses.create(**self._build_create_kwargs(request), stream=True),
             )
 
+        tool_names: dict[str, str] = {}
         for event in stream:
             event_type = getattr(event, "type", "")
             if event_type == "response.output_text.delta":
-                yield ModelStreamEvent(delta=str(getattr(event, "delta", "")))
+                yield ProviderStreamEvent.text_delta(str(getattr(event, "delta", "")), raw=event)
+                continue
+
+            if event_type == "response.output_item.added":
+                item = getattr(event, "item", None)
+                if getattr(item, "type", "") == "function_call":
+                    item_id = str(getattr(item, "id", "") or "")
+                    item_name = str(getattr(item, "name", "") or "")
+                    if item_id and item_name:
+                        tool_names[item_id] = item_name
+                continue
+
+            if event_type == "response.function_call_arguments.delta":
+                call_id = str(getattr(event, "item_id", "") or "")
+                if call_id:
+                    yield ProviderStreamEvent.tool_call_delta(
+                        call_id=call_id,
+                        name=tool_names.get(call_id),
+                        arguments_delta=str(getattr(event, "delta", "")),
+                        raw=event,
+                    )
+                continue
+
+            if event_type == "response.function_call_arguments.done":
+                call_id = str(getattr(event, "item_id", "") or "")
+                if call_id:
+                    yield ProviderStreamEvent.tool_call_completed(
+                        call_id=call_id,
+                        name=tool_names.get(call_id, ""),
+                        arguments=self._parse_arguments(getattr(event, "arguments", "")),
+                        raw=event,
+                    )
+                continue
+
+            if event_type == "response.output_item.done":
+                item = getattr(event, "item", None)
+                if getattr(item, "type", "") == "function_call":
+                    call_id = str(getattr(item, "id", "") or "")
+                    name = str(getattr(item, "name", "") or tool_names.get(call_id, ""))
+                    if call_id and name:
+                        yield ProviderStreamEvent.tool_call_completed(
+                            call_id=call_id,
+                            name=name,
+                            arguments=self._parse_arguments(getattr(item, "arguments", "")),
+                            raw=event,
+                        )
                 continue
 
             if event_type == "response.completed":
                 response = getattr(event, "response", None)
-                yield ModelStreamEvent(final=True, usage=self._usage_from_response(response))
+                usage = self._usage_from_response(response)
+                if usage.total_tokens > 0:
+                    yield ProviderStreamEvent.usage_event(usage, raw=event)
+                yield ProviderStreamEvent.message_completed(raw=event)
+                yield ProviderStreamEvent.completed(raw=event)
 
     async def capabilities(self) -> ModelCapabilities:
         return ModelCapabilities(
@@ -96,3 +147,10 @@ class OpenAIResponsesProvider:
             input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
         )
+
+    def _parse_arguments(self, arguments: Any) -> dict[str, Any]:
+        if isinstance(arguments, dict):
+            return cast(dict[str, Any], arguments.copy())
+        if not isinstance(arguments, str) or not arguments:
+            return {}
+        return cast(dict[str, Any], json.loads(arguments))

@@ -55,11 +55,75 @@ class ModelStreamEvent:
     raw: Any = None
 
 
+def _arguments_map() -> dict[str, Any]:
+    return {}
+
+
+@dataclass(frozen=True)
+class ProviderStreamEvent:
+    kind: str
+    delta: str = ""
+    call_id: str | None = None
+    name: str | None = None
+    arguments_delta: str = ""
+    arguments: dict[str, Any] = field(default_factory=_arguments_map)
+    usage: Usage | None = None
+    raw: Any = None
+
+    @classmethod
+    def text_delta(cls, delta: str, raw: Any = None) -> "ProviderStreamEvent":
+        return cls(kind="text_delta", delta=delta, raw=raw)
+
+    @classmethod
+    def tool_call_delta(
+        cls,
+        call_id: str,
+        name: str | None,
+        arguments_delta: str,
+        raw: Any = None,
+    ) -> "ProviderStreamEvent":
+        return cls(
+            kind="tool_call_delta",
+            call_id=call_id,
+            name=name,
+            arguments_delta=arguments_delta,
+            raw=raw,
+        )
+
+    @classmethod
+    def tool_call_completed(
+        cls,
+        call_id: str,
+        name: str,
+        arguments: dict[str, Any],
+        raw: Any = None,
+    ) -> "ProviderStreamEvent":
+        return cls(
+            kind="tool_call_completed",
+            call_id=call_id,
+            name=name,
+            arguments=dict(arguments),
+            raw=raw,
+        )
+
+    @classmethod
+    def message_completed(cls, raw: Any = None) -> "ProviderStreamEvent":
+        return cls(kind="message_completed", raw=raw)
+
+    @classmethod
+    def usage_event(cls, usage: Usage, raw: Any = None) -> "ProviderStreamEvent":
+        return cls(kind="usage", usage=usage, raw=raw)
+
+    @classmethod
+    def completed(cls, raw: Any = None) -> "ProviderStreamEvent":
+        return cls(kind="completed", raw=raw)
+
+
 class ModelProvider(Protocol):
     async def complete(self, request: ModelRequest) -> ModelResponse:
         ...
 
-    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderStreamEvent | ModelStreamEvent]:
         ...
 
     async def capabilities(self) -> ModelCapabilities:

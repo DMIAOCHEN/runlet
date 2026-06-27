@@ -12,7 +12,14 @@ from runlet.core.errors import (
 )
 from runlet.core.events import CompositeEventSink, EventSink, InMemoryObserver, RuntimeEvent
 from runlet.core.messages import Message, ToolCall, ToolResult
-from runlet.core.models import ModelCapabilities, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent
+from runlet.core.models import (
+    ModelCapabilities,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    ModelStreamEvent,
+    ProviderStreamEvent,
+)
 from runlet.core.runs import RunContext, RunResult, Usage
 
 __all__ = [
@@ -31,6 +38,7 @@ __all__ = [
     "ModelRequest",
     "ModelResponse",
     "ModelStreamEvent",
+    "ProviderStreamEvent",
     "PolicyStop",
     "RunContext",
     "RunResult",

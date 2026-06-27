@@ -9,8 +9,8 @@ structured observability, and flexible hooks around model and tool execution.
 ## Current Status
 
 This repository now contains an MVP runtime skeleton with core contracts,
-events, tools, hooks, context budgeting, streaming, and in-memory state. The
-API is not stable yet.
+events, tools, hooks, context budgeting, streaming, provider adapters, and
+in-memory state. The API is not stable yet.
 
 ## Design Goals
 
@@ -146,15 +146,51 @@ async for event in Runtime().stream(agent, "Explain recursion in one sentence.")
         print(event.payload["delta"], end="")
 ```
 
+Streaming with tool execution:
+
+```python
+from runlet import Agent, Runtime, tool
+from runlet.providers import OpenAIResponsesProvider
+
+
+@tool
+async def lookup_order(order_id: str) -> str:
+    return f"order {order_id} shipped"
+
+
+provider = OpenAIResponsesProvider(model="gpt-5.5")
+agent = Agent(
+    name="assistant",
+    instructions="Use tools when needed.",
+    model=provider,
+    tools=(lookup_order,),
+)
+
+async for event in Runtime().stream(agent, "Check order 123 and tell me the result."):
+    if event.type == "model.stream.delta":
+        print(event.payload["delta"], end="")
+```
+
+When the provider emits a tool call during streaming, `Runtime.stream()` now
+executes the tool, appends the tool result to the conversation, and continues
+the next model round until the run completes.
+
 Current scope of the provider:
 
 - `complete()` supported
 - `capabilities()` supported
-- text-delta `stream()` supported
+- `stream()` supported
+- text deltas supported
+- streaming tool execution through `Runtime.stream()` supported
 - `base_url` supported
 - `options["openai"]["extra_body"]` supported
-- tool messages are not supported yet
-- tool-call streaming is not supported yet
+- provider-specific request options stay under `ModelRequest.options["openai"]`
+
+Current streaming contract:
+
+- providers can emit provider-neutral streaming step events internally
+- `Runtime.stream()` handles multi-round tool execution loops
+- OpenAI is the first provider implementation of this contract
 
 ## Development
 

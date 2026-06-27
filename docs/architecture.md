@@ -25,6 +25,37 @@ Runlet's first runtime design is an async, provider-neutral agent loop.
 9. State updates and structured events are emitted.
 10. The loop continues until a final result, policy stop, cancellation, or error.
 
+## Streaming Flow
+
+`Runtime.stream()` follows the same high-level loop as `Runtime.run()`, but each
+assistant step is consumed as a stream.
+
+1. The runtime prepares a `ModelRequest` for the current step.
+2. The provider emits internal streaming step events.
+3. Text deltas are forwarded as `model.stream.delta`.
+4. Completed tool calls are executed immediately by the runtime.
+5. Tool results are appended to the message list.
+6. If a tool was executed, the runtime starts the next streamed model step.
+7. If the assistant step completes without tool calls, the run completes.
+
+This keeps streaming tool execution in the runtime loop rather than pushing it
+into provider-specific code.
+
+## Provider Streaming Boundary
+
+Providers are responsible for translating vendor-specific stream events into a
+Runlet internal event layer. The current event kinds include:
+
+- `text_delta`
+- `tool_call_delta`
+- `tool_call_completed`
+- `message_completed`
+- `usage`
+- `completed`
+
+This boundary keeps `runlet.runtime` provider-neutral while still allowing each
+provider adapter to map its own SDK semantics into the runtime loop.
+
 ## Non-Goals
 
 Runlet core does not provide an HTTP server, UI, worker queue, multi-tenant
