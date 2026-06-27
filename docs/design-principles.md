@@ -2,6 +2,9 @@
 
 Runlet is a small runtime library, not an agent application framework.
 
+For a usage-first introduction, start with `README.md` and the guides under
+`docs/getting-started/`.
+
 ## Small Core
 
 The core package should contain only the execution model and stable extension
@@ -30,4 +33,3 @@ be derived from events.
 
 Hooks may alter runtime behavior. Observers should only consume events. Keeping
 these separate prevents tracing from becoming hidden control flow.
-

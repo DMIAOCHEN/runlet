@@ -3,6 +3,13 @@
 This roadmap is intentionally small. Runlet should earn complexity through real
 runtime needs, not start as a large framework.
 
+Current documentation entrypoints:
+
+- `README.md`
+- `docs/getting-started/`
+- `docs/guides/`
+- `docs/concepts/`
+
 ## 0.1
 
 - Define core data models and protocols.
@@ -26,4 +33,3 @@ runtime needs, not start as a large framework.
 - Add state store adapters.
 - Add replay/debug helpers.
 - Evaluate whether graph execution belongs in Runlet or in a separate package.
-

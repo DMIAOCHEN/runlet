@@ -1,6 +1,9 @@
 # Architecture
 
-Runlet's first runtime design is an async, provider-neutral agent loop.
+Runlet's current architecture is a small, async, provider-neutral agent loop.
+
+If you are new to the project, start with the getting-started guides in
+`docs/getting-started/` first. This document is the maintainer-oriented view.
 
 ## Packages
 
