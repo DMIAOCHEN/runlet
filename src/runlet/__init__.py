@@ -31,9 +31,12 @@ from runlet.core import (
 )
 from runlet.integrations import BaseHook, HookRunner, ToolContext, ToolSpec, execute_tool_call, tool
 from runlet.runtime import (
+    CheckpointStore,
     ContextManager,
     ContextPolicy,
+    InMemoryCheckpointStore,
     HookPolicy,
+    RunCheckpoint,
     InMemoryStateStore,
     RunPolicy,
     Runtime,
@@ -49,6 +52,7 @@ __all__ = [
     "Agent",
     "CancellationError",
     "CompositeEventSink",
+    "CheckpointStore",
     "ContextManager",
     "ContextPolicy",
     "ContextOverflowError",
@@ -60,6 +64,7 @@ __all__ = [
     "HumanRequest",
     "HumanResponse",
     "InMemoryObserver",
+    "InMemoryCheckpointStore",
     "InternalRuntimeError",
     "Message",
     "ModelCapabilities",
@@ -70,6 +75,7 @@ __all__ = [
     "ProviderStreamEvent",
     "PolicyStop",
     "RunContext",
+    "RunCheckpoint",
     "RunPolicy",
     "RunResult",
     "RunletError",
