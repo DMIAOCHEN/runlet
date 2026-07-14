@@ -20,11 +20,12 @@ class RunCheckpoint:
     agent_name: str
     request: ModelRequest
     messages: tuple[Message, ...]
-    pending_request: HumanRequest
+    pending_request: HumanRequest | None
     pending_tool_call: ToolCall | None
     step: int
     reasoning: str
     usage: Usage
+    pending_tool_calls: tuple[ToolCall, ...] = ()
     metadata: dict[str, Any] = field(default_factory=_metadata_map)
 
 

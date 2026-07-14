@@ -87,8 +87,19 @@ class Runtime:
             raise ValueError("Checkpoint agent does not match the resumed agent.")
 
         request = checkpoint.pending_request
-        if response.request_id != request.id:
-            raise ValueError("Human response request id does not match the pending request.")
+        if request is None:
+            tools = {
+                tool_spec.name: tool_spec
+                for tool_spec in checkpoint.request.tools
+                if isinstance(tool_spec, ToolSpec)
+            }
+            return await self._continue_checkpoint(
+                agent,
+                checkpoint,
+                list(checkpoint.messages),
+                tools,
+                HookRunner(agent.hooks),
+            )
 
         messages = list(checkpoint.messages)
         tools = {
@@ -98,7 +109,25 @@ class Runtime:
         }
         call = checkpoint.pending_tool_call
         if call is None:
-            raise ValueError("Checkpoint is missing its pending tool call.")
+            hook_runner = HookRunner(agent.hooks)
+            remaining_result = await self._process_remaining_calls(
+                agent,
+                checkpoint.request,
+                checkpoint.run_id,
+                messages,
+                tools,
+                checkpoint.step,
+                [checkpoint.reasoning] if checkpoint.reasoning else [],
+                checkpoint.usage,
+                hook_runner,
+                checkpoint.pending_tool_calls,
+                checkpoint,
+            )
+            if remaining_result is not None:
+                return remaining_result
+            return await self._continue_checkpoint(agent, checkpoint, messages, tools, hook_runner)
+        if response.request_id != request.id:
+            raise ValueError("Human response request id does not match the pending request.")
 
         if request.kind == "tool_approval":
             if response.action not in {"approve", "reject"}:
@@ -147,36 +176,12 @@ class Runtime:
                 payload={"checkpoint_id": checkpoint.id},
             )
         )
-        await self.checkpoint_store.delete(checkpoint.id)
-
         hook_runner = HookRunner(agent.hooks)
         if request.kind == "tool_approval" and response.action == "approve":
-            await self.event_sink.emit(
-                RuntimeEvent(
-                    type="tool.started",
-                    run_id=checkpoint.run_id,
-                    agent_name=agent.name,
-                    payload={"name": call.name},
-                )
-            )
-            tool_result = await execute_tool_call(call, tools, ToolContext(run_id=checkpoint.run_id))
-            tool_result = await hook_runner.after_tool_result(tool_result, None)
-            await self.event_sink.emit(
-                RuntimeEvent(
-                    type="tool.completed",
-                    run_id=checkpoint.run_id,
-                    agent_name=agent.name,
-                    payload={"name": tool_result.name},
-                )
-            )
-            messages.append(
-                Message.tool(
-                    tool_result.content,
-                    metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
-                )
-            )
+            await self._execute_call(agent, checkpoint.run_id, call, tools, messages, hook_runner)
+        await self._save_continuation(checkpoint, messages, checkpoint.pending_tool_calls)
 
-        return await self._run_loop(
+        remaining_result = await self._process_remaining_calls(
             agent,
             checkpoint.request,
             checkpoint.run_id,
@@ -185,6 +190,18 @@ class Runtime:
             checkpoint.step,
             [checkpoint.reasoning] if checkpoint.reasoning else [],
             checkpoint.usage,
+            hook_runner,
+            checkpoint.pending_tool_calls,
+            checkpoint,
+        )
+        if remaining_result is not None:
+            return remaining_result
+
+        return await self._continue_checkpoint(
+            agent,
+            checkpoint,
+            messages,
+            tools,
             hook_runner,
         )
 
@@ -240,7 +257,7 @@ class Runtime:
                         },
                     )
                 )
-                for call in response.tool_calls:
+                for call_index, call in enumerate(response.tool_calls):
                     call = await hook_runner.before_tool_call(call, None)
                     tool = tools.get(call.name)
                     if isinstance(tool, HumanInputToolSpec):
@@ -255,6 +272,7 @@ class Runtime:
                             step + 1,
                             reasoning,
                             usage,
+                            tuple(response.tool_calls[call_index + 1 :]),
                         )
                     if tool is not None and tool.requires_approval:
                         human_request = HumanRequest(
@@ -273,31 +291,9 @@ class Runtime:
                             step + 1,
                             reasoning,
                             usage,
+                            tuple(response.tool_calls[call_index + 1 :]),
                         )
-                    await self.event_sink.emit(
-                        RuntimeEvent(
-                            type="tool.started",
-                            run_id=run_id,
-                            agent_name=agent.name,
-                            payload={"name": call.name},
-                        )
-                    )
-                    tool_result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
-                    tool_result = await hook_runner.after_tool_result(tool_result, None)
-                    await self.event_sink.emit(
-                        RuntimeEvent(
-                            type="tool.completed",
-                            run_id=run_id,
-                            agent_name=agent.name,
-                            payload={"name": tool_result.name},
-                        )
-                    )
-                    messages.append(
-                        Message.tool(
-                            tool_result.content,
-                            metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
-                        )
-                    )
+                    await self._execute_call(agent, run_id, call, tools, messages, hook_runner)
                 continue
 
             run_result = RunResult.completed(
@@ -345,6 +341,8 @@ class Runtime:
         next_step: int,
         reasoning: list[str],
         usage: Usage,
+        pending_tool_calls: tuple[ToolCall, ...] = (),
+        replace_checkpoint_id: str | None = None,
     ) -> RunResult:
         checkpoint_id = f"checkpoint_{uuid4().hex}"
         checkpoint = RunCheckpoint(
@@ -358,8 +356,11 @@ class Runtime:
             step=next_step,
             reasoning="".join(reasoning),
             usage=usage,
+            pending_tool_calls=pending_tool_calls,
         )
         await self.checkpoint_store.save(checkpoint)
+        if replace_checkpoint_id is not None:
+            await self.checkpoint_store.delete(replace_checkpoint_id)
         await self.event_sink.emit(
             RuntimeEvent(
                 type="human.requested",
@@ -384,6 +385,141 @@ class Runtime:
             usage=usage,
             messages=tuple(messages),
         )
+
+    async def _process_remaining_calls(
+        self,
+        agent: Agent,
+        request: ModelRequest,
+        run_id: str,
+        messages: list[Message],
+        tools: dict[str, ToolSpec],
+        step: int,
+        reasoning: list[str],
+        usage: Usage,
+        hook_runner: HookRunner,
+        pending_calls: tuple[ToolCall, ...],
+        checkpoint: RunCheckpoint,
+    ) -> RunResult | None:
+        for call_index, call in enumerate(pending_calls):
+            call = await hook_runner.before_tool_call(call, None)
+            tool = tools.get(call.name)
+            if isinstance(tool, HumanInputToolSpec):
+                human_request = replace(tool.human_request_from_call(call), tool_call=call)
+                return await self._interrupt(
+                    agent,
+                    request,
+                    run_id,
+                    messages,
+                    human_request,
+                    call,
+                    step,
+                    reasoning,
+                    usage,
+                    pending_calls[call_index + 1 :],
+                    checkpoint.id,
+                )
+            if tool is not None and tool.requires_approval:
+                human_request = HumanRequest(
+                    id=f"hta_{uuid4().hex}",
+                    kind="tool_approval",
+                    prompt=f"Approve tool call: {call.name}",
+                    tool_call=call,
+                )
+                return await self._interrupt(
+                    agent,
+                    request,
+                    run_id,
+                    messages,
+                    human_request,
+                    call,
+                    step,
+                    reasoning,
+                    usage,
+                    pending_calls[call_index + 1 :],
+                    checkpoint.id,
+                )
+            await self._execute_call(agent, run_id, call, tools, messages, hook_runner)
+            await self._save_continuation(checkpoint, messages, pending_calls[call_index + 1 :])
+        return None
+
+    async def _execute_call(
+        self,
+        agent: Agent,
+        run_id: str,
+        call: ToolCall,
+        tools: dict[str, ToolSpec],
+        messages: list[Message],
+        hook_runner: HookRunner,
+    ) -> None:
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="tool.started",
+                run_id=run_id,
+                agent_name=agent.name,
+                payload={"name": call.name},
+            )
+        )
+        tool_result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
+        tool_result = await hook_runner.after_tool_result(tool_result, None)
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="tool.completed",
+                run_id=run_id,
+                agent_name=agent.name,
+                payload={"name": tool_result.name},
+            )
+        )
+        messages.append(
+            Message.tool(
+                tool_result.content,
+                metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
+            )
+        )
+
+    async def _save_continuation(
+        self,
+        checkpoint: RunCheckpoint,
+        messages: list[Message],
+        pending_tool_calls: tuple[ToolCall, ...],
+    ) -> None:
+        await self.checkpoint_store.save(
+            replace(
+                checkpoint,
+                messages=tuple(messages),
+                pending_tool_call=None,
+                pending_tool_calls=pending_tool_calls,
+            )
+        )
+
+    async def _continue_checkpoint(
+        self,
+        agent: Agent,
+        checkpoint: RunCheckpoint,
+        messages: list[Message],
+        tools: dict[str, ToolSpec],
+        hook_runner: HookRunner,
+    ) -> RunResult:
+        ready_checkpoint = replace(
+            checkpoint,
+            messages=tuple(messages),
+            pending_request=None,
+            pending_tool_call=None,
+            pending_tool_calls=(),
+        )
+        await self.checkpoint_store.save(ready_checkpoint)
+        result = await self._run_loop(
+            agent,
+            checkpoint.request,
+            checkpoint.run_id,
+            messages,
+            tools,
+            checkpoint.step,
+            [checkpoint.reasoning] if checkpoint.reasoning else [],
+            checkpoint.usage,
+            hook_runner,
+        )
+        await self.checkpoint_store.delete(checkpoint.id)
+        return result
 
     @staticmethod
     def _add_usage(total: Usage, response: Usage) -> Usage:
