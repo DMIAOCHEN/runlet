@@ -101,6 +101,16 @@ For `kind="input"`, render the prompt and resume with `HumanResponse(request_id=
 
 ## Resume semantics
 
-The response is not added as a new `Message.user`. On resume, Runlet records the human input as a tool result associated with the original `tool_call_id`, then continues the model loop. Preserve both `checkpoint_id` and the `HumanRequest.id` in the application session so a response resumes the intended interruption.
+The response is not added as a new `Message.user`. For an approved tool
+approval, Runlet executes the real handler and records its `ToolResult`. For a
+rejected approval, it appends the fixed rejection tool result. Only
+`ask_human()` choice and input values are serialized into a tool result tied to
+the original `tool_call_id`.
+
+After an interruption from `Runtime.stream()`, call `Runtime.resume()` with the
+checkpoint and response. `resume()` returns a normal, non-streaming
+`RunResult`; it does not resume the streaming iterator. Preserve both
+`checkpoint_id` and the `HumanRequest.id` in the application session so a
+response resumes the intended interruption.
 
 `InMemoryCheckpointStore` is appropriate only while the runtime process stays alive. Implement `CheckpointStore` when the application needs durable checkpoints across restarts or processes.

@@ -25,7 +25,11 @@ If you are new to the project, start with the getting-started guides in
 6. The model provider is called.
 7. Hooks can inspect or modify the model response.
 8. Tool calls are validated and passed through hooks. A call that requires approval, or a call to `ask_human()`, creates and saves a checkpoint before the runtime emits the interruption events.
-9. The caller renders the `HumanRequest` and calls `Runtime.resume()` with a matching `HumanResponse`. The response is recorded as the original tool call's result, not as a new user message.
+9. The caller renders the `HumanRequest` and calls `Runtime.resume()` with a
+   matching `HumanResponse`. An approved tool approval executes its handler and
+   records its `ToolResult`; a rejected approval appends the fixed rejection
+   result; only `ask_human()` choice and input values become serialized tool
+   results for the original tool call. No response becomes a new user message.
 10. Remaining tool calls execute, state updates and structured events are emitted, and the loop continues until a final result, policy stop, cancellation, or error.
 
 ## Streaming Flow
@@ -38,9 +42,11 @@ assistant step is consumed as a stream.
 3. Text deltas are forwarded as `model.stream.delta`.
 4. Completed tool calls execute immediately unless they require approval or request human input.
 5. For a human interruption, the runtime saves a checkpoint before yielding `human.requested` and `run.interrupted`; the caller resumes with a matching `HumanResponse`.
-6. A resumed human response becomes a tool result for the original tool call.
-7. If a tool was executed or resumed, the runtime starts the next streamed model step.
-8. If the assistant step completes without tool calls, the run completes.
+6. The caller resumes through `Runtime.resume()`, which returns a normal,
+   non-streaming `RunResult`; it does not resume the streaming iterator.
+7. The resumed run follows the same approval and human-input result semantics
+   as the non-streaming execution flow.
+8. If the assistant step completes without tool calls, the stream completes.
 
 This keeps streaming tool execution in the runtime loop rather than pushing it
 into provider-specific code.
