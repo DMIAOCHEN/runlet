@@ -356,6 +356,7 @@ class Runtime:
         usage: Usage,
         pending_tool_calls: tuple[ToolCall, ...] = (),
         replace_checkpoint_id: str | None = None,
+        yielded_events: list[RuntimeEvent] | None = None,
     ) -> RunResult:
         checkpoint_id = f"checkpoint_{uuid4().hex}"
         checkpoint = RunCheckpoint(
@@ -374,22 +375,24 @@ class Runtime:
         await self.checkpoint_store.save(checkpoint)
         if replace_checkpoint_id is not None:
             await self.checkpoint_store.delete(replace_checkpoint_id)
-        await self.event_sink.emit(
+        interruption_events = (
             RuntimeEvent(
                 type="human.requested",
                 run_id=run_id,
                 agent_name=agent.name,
                 payload=self._human_event_payload(human_request, checkpoint),
-            )
-        )
-        await self.event_sink.emit(
+            ),
             RuntimeEvent(
                 type="run.interrupted",
                 run_id=run_id,
                 agent_name=agent.name,
-                payload={"checkpoint_id": checkpoint_id},
-            )
+                payload={"checkpoint_id": checkpoint_id, "kind": human_request.kind},
+            ),
         )
+        for event in interruption_events:
+            await self.event_sink.emit(event)
+        if yielded_events is not None:
+            yielded_events.extend(interruption_events)
         return RunResult.interrupted(
             run_id=run_id,
             interruption=human_request,
@@ -608,7 +611,7 @@ class Runtime:
         all_text_deltas: list[str] = []
         all_reasoning_deltas: list[str] = []
 
-        for _ in range(self.policy.max_steps):
+        for step in range(self.policy.max_steps):
             step_request = self._step_request_from_state(request, messages, tools)
             step_request = await hook_runner.before_model_request(step_request, None)
             capabilities = await agent.model.capabilities()
@@ -669,6 +672,46 @@ class Runtime:
                     completed_tool_calls.append(
                         {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
                     )
+                    tool = tools.get(call.name)
+                    human_request: HumanRequest | None = None
+                    if isinstance(tool, HumanInputToolSpec):
+                        human_request = replace(tool.human_request_from_call(call), tool_call=call)
+                    elif tool is not None and tool.requires_approval:
+                        human_request = HumanRequest(
+                            id=f"hta_{uuid4().hex}",
+                            kind="tool_approval",
+                            prompt=f"Approve tool call: {call.name}",
+                            tool_call=call,
+                        )
+
+                    if human_request is not None:
+                        messages.append(
+                            Message.assistant(
+                                "".join(collected_deltas),
+                                metadata={
+                                    "tool_calls": completed_tool_calls,
+                                    "reasoning": "".join(collected_reasoning_deltas),
+                                },
+                            )
+                        )
+                        messages.extend(pending_tool_messages)
+                        interruption_events: list[RuntimeEvent] = []
+                        await self._interrupt(
+                            agent,
+                            request,
+                            run_id,
+                            messages,
+                            human_request,
+                            call,
+                            step + 1,
+                            all_reasoning_deltas,
+                            Usage(),
+                            yielded_events=interruption_events,
+                        )
+                        for event in interruption_events:
+                            yield event
+                        return
+
                     await self.event_sink.emit(
                         RuntimeEvent(
                             type="tool.started",

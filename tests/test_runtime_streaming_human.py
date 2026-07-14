@@ -1,0 +1,110 @@
+import unittest
+from collections.abc import AsyncIterator
+
+from runlet import Agent, HumanResponse, Runtime
+from runlet.core.events import InMemoryObserver
+from runlet.core.models import ModelCapabilities, ModelRequest, ModelResponse, ProviderStreamEvent
+from runlet.core.messages import Message
+from runlet.integrations.human import ask_human
+from runlet.integrations.tools import ToolSpec
+
+
+class StreamingHumanProvider:
+    def __init__(self, tool_name: str, arguments: dict[str, object]) -> None:
+        self.tool_name = tool_name
+        self.arguments = arguments
+        self.stream_requests: list[ModelRequest] = []
+        self.complete_requests: list[ModelRequest] = []
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderStreamEvent]:
+        self.stream_requests.append(request)
+        yield ProviderStreamEvent.text_delta("Checking that now. ")
+        yield ProviderStreamEvent.tool_call_completed("call_1", self.tool_name, self.arguments)
+        raise AssertionError("The provider stream must not be consumed after a human gate.")
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.complete_requests.append(request)
+        return ModelResponse(message=Message.assistant("Completed after human input."))
+
+    async def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(model_name="streaming-human", context_window=4096, supports_streaming=True)
+
+
+class RuntimeStreamingHumanTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_yields_text_then_approval_interruption_and_resume_executes_tool(self) -> None:
+        executed_calls: list[dict[str, str]] = []
+
+        async def refund(arguments, context) -> str:
+            del context
+            order_id = arguments["order_id"]
+            executed_calls.append({"order_id": order_id})
+            return "refunded"
+
+        refund_tool = ToolSpec(
+            name="refund",
+            description="Refund an order.",
+            input_schema={
+                "type": "object",
+                "required": ["order_id"],
+                "properties": {"order_id": {"type": "string"}},
+            },
+            handler=refund,
+            requires_approval=True,
+        )
+
+        model = StreamingHumanProvider("refund", {"order_id": "123"})
+        observer = InMemoryObserver()
+        runtime = Runtime(event_sink=observer)
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(refund_tool,))
+
+        events = [event async for event in runtime.stream(agent, "Refund it")]
+
+        self.assertEqual(
+            [event.type for event in events],
+            ["model.stream.delta", "human.requested", "run.interrupted"],
+        )
+        self.assertEqual(executed_calls, [])
+        interrupted = events[-1]
+        self.assertEqual(interrupted.payload["kind"], "tool_approval")
+        self.assertEqual(len(model.stream_requests), 1)
+        self.assertNotIn("tool.started", [event.type for event in observer.events])
+
+        result = await runtime.resume(
+            agent,
+            checkpoint_id=interrupted.payload["checkpoint_id"],
+            response=HumanResponse(request_id=events[-2].payload["request_id"], action="approve"),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(executed_calls, [{"order_id": "123"}])
+        self.assertEqual(model.complete_requests[-1].messages[-1].text, "refunded")
+
+    async def test_stream_yields_choice_interruption_and_resume_adds_human_result(self) -> None:
+        model = StreamingHumanProvider(
+            "ask_human",
+            {
+                "kind": "choice",
+                "prompt": "Which refund method?",
+                "options": [{"id": "credit", "label": "Store credit"}],
+            },
+        )
+        runtime = Runtime()
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(ask_human(),))
+
+        events = [event async for event in runtime.stream(agent, "Refund it")]
+
+        self.assertEqual(
+            [event.type for event in events],
+            ["model.stream.delta", "human.requested", "run.interrupted"],
+        )
+        self.assertEqual(events[-2].payload["kind"], "choice")
+        self.assertEqual(events[-1].payload["kind"], "choice")
+
+        result = await runtime.resume(
+            agent,
+            checkpoint_id=events[-1].payload["checkpoint_id"],
+            response=HumanResponse(request_id=events[-2].payload["request_id"], action="select", value="credit"),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(model.complete_requests[-1].messages[-1].metadata["human_input"], True)
