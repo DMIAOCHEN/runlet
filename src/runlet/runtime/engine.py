@@ -639,7 +639,9 @@ class Runtime:
             collected_reasoning_deltas: list[str] = []
             completed_tool_calls: list[dict[str, object]] = []
             pending_tool_messages: list[Message] = []
-            async for step_event in self._iter_provider_stream_events(agent.model.stream(prepared.request)):
+            provider_stream = agent.model.stream(prepared.request)
+            stream_events = self._iter_provider_stream_events(provider_stream)
+            async for step_event in stream_events:
                 if step_event.kind == "text_delta" and step_event.delta:
                     collected_deltas.append(step_event.delta)
                     all_text_deltas.append(step_event.delta)
@@ -708,6 +710,10 @@ class Runtime:
                             Usage(),
                             yielded_events=interruption_events,
                         )
+                        await stream_events.aclose()
+                        close_provider_stream = getattr(provider_stream, "aclose", None)
+                        if close_provider_stream is not None:
+                            await close_provider_stream()
                         for event in interruption_events:
                             yield event
                         return

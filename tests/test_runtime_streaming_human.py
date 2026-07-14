@@ -15,12 +15,16 @@ class StreamingHumanProvider:
         self.arguments = arguments
         self.stream_requests: list[ModelRequest] = []
         self.complete_requests: list[ModelRequest] = []
+        self.stream_closed = False
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderStreamEvent]:
         self.stream_requests.append(request)
-        yield ProviderStreamEvent.text_delta("Checking that now. ")
-        yield ProviderStreamEvent.tool_call_completed("call_1", self.tool_name, self.arguments)
-        raise AssertionError("The provider stream must not be consumed after a human gate.")
+        try:
+            yield ProviderStreamEvent.text_delta("Checking that now. ")
+            yield ProviderStreamEvent.tool_call_completed("call_1", self.tool_name, self.arguments)
+            raise AssertionError("The provider stream must not be consumed after a human gate.")
+        finally:
+            self.stream_closed = True
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.complete_requests.append(request)
@@ -68,6 +72,11 @@ class RuntimeStreamingHumanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(interrupted.payload["kind"], "tool_approval")
         self.assertEqual(len(model.stream_requests), 1)
         self.assertNotIn("tool.started", [event.type for event in observer.events])
+        self.assertEqual(
+            [event.type for event in observer.events if event.type in {"human.requested", "run.interrupted"}],
+            ["human.requested", "run.interrupted"],
+        )
+        self.assertTrue(model.stream_closed)
 
         result = await runtime.resume(
             agent,
