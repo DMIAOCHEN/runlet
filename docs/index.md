@@ -92,6 +92,7 @@ asyncio.run(main())
 - [Anthropic Messages](getting-started/anthropic-messages.md)
 - [Streaming](getting-started/streaming.md)
 - [Tool Calling](getting-started/tool-calling.md)
+- [Human In The Loop](guides/human-in-the-loop.md)
 - [Full Example](getting-started/full-example.md)
 
 ## Core capabilities

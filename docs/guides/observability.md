@@ -26,8 +26,19 @@ runtime = Runtime(event_sink=observer)
 - `model.stream.completed`
 - `tool.started`
 - `tool.completed`
+- `human.requested`
+- `human.responded`
+- `human.response_rejected`
+- `run.interrupted`
+- `run.resumed`
 - `run.completed`
 - `policy.stopped`
+
+## Human-in-the-loop events
+
+When a tool requires approval or calls `ask_human()`, Runlet saves a checkpoint and then emits `human.requested` followed by `run.interrupted`. When the application resumes the checkpoint, it emits `human.responded` and `run.resumed`. Invalid or stale responses emit `human.response_rejected`.
+
+Human event payloads identify the request, checkpoint, request kind, and where applicable the response action. They intentionally omit prompts, choices, and submitted values so applications can observe the flow without exposing human input content in routine event sinks.
 
 ## Example
 

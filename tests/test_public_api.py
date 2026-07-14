@@ -21,6 +21,11 @@ class PublicApiTests(unittest.TestCase):
             "HumanOption",
             "HumanRequest",
             "HumanResponse",
+            "RunCheckpoint",
+            "CheckpointStore",
+            "InMemoryCheckpointStore",
+            "HumanInputToolSpec",
+            "ask_human",
         }
 
         self.assertTrue(expected.issubset(set(runlet.__all__)))

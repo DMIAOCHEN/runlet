@@ -33,6 +33,7 @@ nav:
       - Conversation State: guides/conversation-state.md
       - Provider Options: guides/provider-options.md
       - Reasoning: guides/reasoning.md
+      - Human In The Loop: guides/human-in-the-loop.md
       - Observability: guides/observability.md
   - Concepts:
       - Runtime Boundary: concepts/runtime-boundary.md
