@@ -1,6 +1,6 @@
 import unittest
 
-from runlet import Agent, Message, RunContext, RunResult, ToolCall, ToolResult, Usage
+from runlet import Agent, HumanOption, HumanRequest, Message, RunContext, RunResult, ToolCall, ToolResult, Usage
 from runlet.core.errors import ContextOverflowError, RunletError
 
 
@@ -26,6 +26,20 @@ class CoreObjectTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output, "done")
         self.assertEqual(result.usage.total_tokens, 3)
+
+    def test_interrupted_result_exposes_request_and_checkpoint(self) -> None:
+        request = HumanRequest(
+            id="hitl_1",
+            kind="choice",
+            prompt="Choose.",
+            options=(HumanOption(id="a", label="A"),),
+        )
+
+        result = RunResult.interrupted("run_1", request, "checkpoint_1")
+
+        self.assertEqual(result.status, "interrupted")
+        self.assertIs(result.interruption, request)
+        self.assertEqual(result.checkpoint_id, "checkpoint_1")
 
     def test_tool_call_has_arguments(self) -> None:
         call = ToolCall(id="call_1", name="lookup", arguments={"id": "123"})

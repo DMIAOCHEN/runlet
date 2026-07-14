@@ -11,6 +11,7 @@ from runlet.core.errors import (
     ToolError,
 )
 from runlet.core.events import CompositeEventSink, EventSink, InMemoryObserver, RuntimeEvent
+from runlet.core.human import HumanOption, HumanRequest, HumanResponse
 from runlet.core.messages import Message, ToolCall, ToolResult
 from runlet.core.models import (
     ModelCapabilities,
@@ -29,6 +30,9 @@ __all__ = [
     "ContextOverflowError",
     "EventSink",
     "HookError",
+    "HumanOption",
+    "HumanRequest",
+    "HumanResponse",
     "InMemoryObserver",
     "InternalRuntimeError",
     "Message",

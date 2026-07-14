@@ -18,6 +18,9 @@ class PublicApiTests(unittest.TestCase):
             "ContextManager",
             "BaseHook",
             "InMemoryStateStore",
+            "HumanOption",
+            "HumanRequest",
+            "HumanResponse",
         }
 
         self.assertTrue(expected.issubset(set(runlet.__all__)))

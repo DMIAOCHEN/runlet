@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from runlet.core.agent import Agent
+from runlet.core.human import HumanRequest
 from runlet.core.messages import Message
 
 
@@ -49,6 +50,8 @@ class RunResult:
     messages: tuple[Message, ...] = ()
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
+    interruption: HumanRequest | None = None
+    checkpoint_id: str | None = None
 
     @classmethod
     def completed(
@@ -84,4 +87,24 @@ class RunResult:
             usage=usage or Usage(),
             error=error,
             messages=messages,
+        )
+
+    @classmethod
+    def interrupted(
+        cls,
+        run_id: str,
+        interruption: HumanRequest,
+        checkpoint_id: str,
+        reasoning: str = "",
+        usage: Usage | None = None,
+        messages: tuple[Message, ...] = (),
+    ) -> "RunResult":
+        return cls(
+            run_id=run_id,
+            status="interrupted",
+            reasoning=reasoning,
+            messages=messages,
+            usage=usage or Usage(),
+            interruption=interruption,
+            checkpoint_id=checkpoint_id,
         )
