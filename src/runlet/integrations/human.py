@@ -60,9 +60,11 @@ class HumanInputToolSpec(ToolSpec):
             if option_id in option_ids:
                 raise ValueError("Choice option ids must be unique.")
 
-            description = value_option.get("description")
-            if description is not None and not isinstance(description, str):
-                raise ValueError("Choice option description must be a string.")
+            description: str | None = None
+            if "description" in value_option:
+                description = value_option["description"]
+                if not isinstance(description, str):
+                    raise ValueError("Choice option description must be a string.")
 
             option_ids.add(option_id)
             options.append(HumanOption(id=option_id, label=label, description=description))

@@ -57,6 +57,20 @@ class HumanInputToolTests(unittest.TestCase):
                 )
             )
 
+    def test_ask_human_rejects_explicit_none_option_description(self) -> None:
+        with self.assertRaises(ValueError):
+            ask_human().human_request_from_call(
+                ToolCall(
+                    "call_1",
+                    "ask_human",
+                    {
+                        "kind": "choice",
+                        "prompt": "Pick",
+                        "options": [{"id": "one", "label": "One", "description": None}],
+                    },
+                )
+            )
+
     def test_ask_human_rejects_non_string_prompt(self) -> None:
         with self.assertRaises(ValueError):
             ask_human().human_request_from_call(
