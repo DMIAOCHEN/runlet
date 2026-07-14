@@ -26,6 +26,7 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     handler: ToolHandler
+    requires_approval: bool = False
 
 
 def _annotation_to_schema(annotation: Any) -> dict[str, str]:

@@ -29,7 +29,16 @@ from runlet.core import (
     ToolResult,
     Usage,
 )
-from runlet.integrations import BaseHook, HookRunner, ToolContext, ToolSpec, execute_tool_call, tool
+from runlet.integrations import (
+    BaseHook,
+    HookRunner,
+    HumanInputToolSpec,
+    ToolContext,
+    ToolSpec,
+    ask_human,
+    execute_tool_call,
+    tool,
+)
 from runlet.runtime import (
     CheckpointStore,
     ContextManager,
@@ -60,6 +69,7 @@ __all__ = [
     "HookError",
     "HookRunner",
     "HookPolicy",
+    "HumanInputToolSpec",
     "HumanOption",
     "HumanRequest",
     "HumanResponse",
@@ -95,5 +105,6 @@ __all__ = [
     "Usage",
     "__version__",
     "execute_tool_call",
+    "ask_human",
     "tool",
 ]

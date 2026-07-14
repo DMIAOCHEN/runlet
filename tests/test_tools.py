@@ -6,6 +6,14 @@ from runlet.integrations import ToolContext, ToolSpec, execute_tool_call, tool
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):
+    def test_tool_spec_defaults_to_not_requiring_approval(self) -> None:
+        async def handler(arguments: dict[str, Any], context: ToolContext) -> str:
+            return "unused"
+
+        spec = ToolSpec(name="read", description="", input_schema={}, handler=handler)
+
+        self.assertFalse(spec.requires_approval)
+
     async def test_decorator_creates_tool_spec(self) -> None:
         @tool
         async def lookup(order_id: str) -> str:
