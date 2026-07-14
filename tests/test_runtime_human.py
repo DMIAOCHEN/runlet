@@ -1,10 +1,12 @@
 import asyncio
 import json
 import unittest
+from dataclasses import fields, is_dataclass
+from typing import Any
 
 from runlet import Agent, HumanResponse, Message, Runtime, ToolCall
 from runlet.core.events import InMemoryObserver
-from runlet.core.models import ModelResponse
+from runlet.core.models import ModelRequest, ModelResponse
 from runlet.integrations.human import ask_human
 from runlet.integrations.tools import ToolSpec
 from runlet.runtime.checkpoints import InMemoryCheckpointStore
@@ -30,6 +32,64 @@ def approval_agent(model, handler) -> Agent:
 
 
 class RuntimeHumanTests(unittest.IsolatedAsyncioTestCase):
+    async def test_checkpoint_excludes_tool_handlers_and_resume_resolves_agent_tools(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        async def refund(arguments, context):
+            del context
+            calls.append(arguments)
+            return "refunded"
+
+        store = InMemoryCheckpointStore()
+        model = FakeModelProvider(
+            [
+                ModelResponse(
+                    message=Message.assistant(""),
+                    tool_calls=[ToolCall("call_1", "refund", {"order_id": "123", "amount": "10"})],
+                ),
+                ModelResponse(message=Message.assistant("done")),
+            ]
+        )
+        runtime = Runtime(checkpoint_store=store)
+        agent = approval_agent(model, refund)
+
+        interrupted = await runtime.run_request(
+            agent,
+            ModelRequest(
+                messages=[Message.user("Refund it")],
+                metadata={"request": "checkpoint"},
+                options={"temperature": 0.1},
+            ),
+        )
+        checkpoint = await store.load(interrupted.checkpoint_id)
+
+        self.assertIsNotNone(checkpoint)
+        self.assertEqual(checkpoint.request.tools, [])
+        self.assertEqual(checkpoint.request.metadata, {"request": "checkpoint"})
+        self.assertEqual(checkpoint.request.options, {"temperature": 0.1})
+        self.assertFalse(self._contains_tool_spec_or_callable(checkpoint))
+
+        result = await runtime.resume(
+            agent,
+            checkpoint_id=interrupted.checkpoint_id,
+            response=HumanResponse(request_id=interrupted.interruption.id, action="approve"),
+        )
+
+        self.assertEqual(result.output, "done")
+        self.assertEqual(calls, [{"order_id": "123", "amount": "10"}])
+
+    @staticmethod
+    def _contains_tool_spec_or_callable(value: Any) -> bool:
+        if isinstance(value, ToolSpec) or callable(value):
+            return True
+        if is_dataclass(value) and not isinstance(value, type):
+            return any(RuntimeHumanTests._contains_tool_spec_or_callable(getattr(value, field.name)) for field in fields(value))
+        if isinstance(value, dict):
+            return any(RuntimeHumanTests._contains_tool_spec_or_callable(item) for item in value.values())
+        if isinstance(value, (list, tuple)):
+            return any(RuntimeHumanTests._contains_tool_spec_or_callable(item) for item in value)
+        return False
+
     async def test_approval_gate_does_not_execute_before_resume(self) -> None:
         calls: list[dict[str, str]] = []
 
@@ -362,6 +422,74 @@ class RuntimeHumanTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIsNotNone(await choice_store.load(choice.checkpoint_id))
+        self.assertIsNotNone(await input_store.load(input_request.checkpoint_id))
+
+    async def test_edited_arguments_require_approval_and_input_requires_string(self) -> None:
+        async def refund(arguments, context):
+            del arguments, context
+            return "refunded"
+
+        approval_store = InMemoryCheckpointStore()
+        approval_model = FakeModelProvider(
+            [ModelResponse(message=Message.assistant(""), tool_calls=[ToolCall("call_1", "refund", {"order_id": "123", "amount": "10"})])]
+        )
+        approval_observer = InMemoryObserver()
+        approval_runtime = Runtime(checkpoint_store=approval_store, event_sink=approval_observer)
+        approval = await approval_runtime.run(approval_agent(approval_model, refund), "Refund it")
+
+        with self.assertRaisesRegex(ValueError, "edited_arguments"):
+            await approval_runtime.resume(
+                approval_agent(approval_model, refund),
+                checkpoint_id=approval.checkpoint_id,
+                response=HumanResponse(
+                    request_id=approval.interruption.id,
+                    action="reject",
+                    edited_arguments={"order_id": "123", "amount": "8"},
+                ),
+            )
+        self.assertIsNotNone(await approval_store.load(approval.checkpoint_id))
+        self.assertEqual(approval_observer.events[-1].type, "human.response_rejected")
+
+        input_store = InMemoryCheckpointStore()
+        input_model = FakeModelProvider(
+            [ModelResponse(message=Message.assistant(""), tool_calls=[ToolCall("input_1", "ask_human", {"kind": "input", "prompt": "Reply"})])]
+        )
+        input_runtime = Runtime(checkpoint_store=input_store)
+        input_agent = Agent(name="support", instructions="Help.", model=input_model, tools=(ask_human(),))
+        input_request = await input_runtime.run(input_agent, "Ask")
+
+        with self.assertRaisesRegex(ValueError, "string"):
+            await input_runtime.resume(
+                input_agent,
+                checkpoint_id=input_request.checkpoint_id,
+                response=HumanResponse(request_id=input_request.interruption.id, action="submit", value=1),  # type: ignore[arg-type]
+            )
+        self.assertIsNotNone(await input_store.load(input_request.checkpoint_id))
+
+        with self.assertRaisesRegex(ValueError, "edited_arguments"):
+            await input_runtime.resume(
+                input_agent,
+                checkpoint_id=input_request.checkpoint_id,
+                response=HumanResponse(
+                    request_id=input_request.interruption.id,
+                    action="select",
+                    value="text",
+                    edited_arguments={"value": "edited"},
+                ),
+            )
+        self.assertIsNotNone(await input_store.load(input_request.checkpoint_id))
+
+        with self.assertRaisesRegex(ValueError, "edited_arguments"):
+            await input_runtime.resume(
+                input_agent,
+                checkpoint_id=input_request.checkpoint_id,
+                response=HumanResponse(
+                    request_id=input_request.interruption.id,
+                    action="submit",
+                    value="text",
+                    edited_arguments={"value": "edited"},
+                ),
+            )
         self.assertIsNotNone(await input_store.load(input_request.checkpoint_id))
 
     async def test_cancelled_approved_handler_leaves_checkpoint_resumable(self) -> None:

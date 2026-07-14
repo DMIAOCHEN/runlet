@@ -88,11 +88,7 @@ class Runtime:
 
         request = checkpoint.pending_request
         if request is None:
-            tools = {
-                tool_spec.name: tool_spec
-                for tool_spec in checkpoint.request.tools
-                if isinstance(tool_spec, ToolSpec)
-            }
+            tools = self._agent_tools(agent)
             return await self._continue_checkpoint(
                 agent,
                 checkpoint,
@@ -102,11 +98,7 @@ class Runtime:
             )
 
         messages = list(checkpoint.messages)
-        tools = {
-            tool_spec.name: tool_spec
-            for tool_spec in checkpoint.request.tools
-            if isinstance(tool_spec, ToolSpec)
-        }
+        tools = self._agent_tools(agent)
         call = checkpoint.pending_tool_call
         if call is None:
             hook_runner = HookRunner(agent.hooks)
@@ -363,7 +355,7 @@ class Runtime:
             id=checkpoint_id,
             run_id=run_id,
             agent_name=agent.name,
-            request=request,
+            request=self._checkpoint_request(request),
             messages=tuple(messages),
             pending_request=human_request,
             pending_tool_call=call,
@@ -566,6 +558,8 @@ class Runtime:
             raise ValueError("Human response request id does not match the pending request.")
         if not isinstance(response.action, str):
             raise ValueError("Human response action must be a string.")
+        if response.edited_arguments is not None and (request.kind != "tool_approval" or response.action != "approve"):
+            raise ValueError("edited_arguments are only allowed when approving a tool call.")
         if request.kind == "tool_approval":
             if response.action not in {"approve", "reject"}:
                 raise ValueError("Tool approval responses must approve or reject.")
@@ -576,8 +570,8 @@ class Runtime:
             if not isinstance(response.value, str) or response.value not in {option.id for option in request.options}:
                 raise ValueError("Choice response must select a listed option.")
             return
-        if response.action != "submit" or response.value is None:
-            raise ValueError("Input responses must submit a value.")
+        if response.action != "submit" or not isinstance(response.value, str):
+            raise ValueError("Input responses must submit a string value.")
 
     async def stream(self, agent: Agent, input: str):
         async for event in self.stream_request(
@@ -634,11 +628,10 @@ class Runtime:
             )
 
             saw_message_completed = False
-            executed_tool = False
             collected_deltas: list[str] = []
             collected_reasoning_deltas: list[str] = []
             completed_tool_calls: list[dict[str, object]] = []
-            pending_tool_messages: list[Message] = []
+            completed_calls: list[ToolCall] = []
             provider_stream = agent.model.stream(prepared.request)
             stream_events = self._iter_provider_stream_events(provider_stream)
             async for step_event in stream_events:
@@ -671,78 +664,10 @@ class Runtime:
                 if step_event.kind == "tool_call_completed" and step_event.call_id and step_event.name:
                     call = ToolCall(id=step_event.call_id, name=step_event.name, arguments=step_event.arguments)
                     call = await hook_runner.before_tool_call(call, None)
+                    completed_calls.append(call)
                     completed_tool_calls.append(
                         {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
                     )
-                    tool = tools.get(call.name)
-                    human_request: HumanRequest | None = None
-                    if isinstance(tool, HumanInputToolSpec):
-                        human_request = replace(tool.human_request_from_call(call), tool_call=call)
-                    elif tool is not None and tool.requires_approval:
-                        human_request = HumanRequest(
-                            id=f"hta_{uuid4().hex}",
-                            kind="tool_approval",
-                            prompt=f"Approve tool call: {call.name}",
-                            tool_call=call,
-                        )
-
-                    if human_request is not None:
-                        messages.append(
-                            Message.assistant(
-                                "".join(collected_deltas),
-                                metadata={
-                                    "tool_calls": completed_tool_calls,
-                                    "reasoning": "".join(collected_reasoning_deltas),
-                                },
-                            )
-                        )
-                        messages.extend(pending_tool_messages)
-                        interruption_events: list[RuntimeEvent] = []
-                        await self._interrupt(
-                            agent,
-                            request,
-                            run_id,
-                            messages,
-                            human_request,
-                            call,
-                            step + 1,
-                            all_reasoning_deltas,
-                            Usage(),
-                            yielded_events=interruption_events,
-                        )
-                        await stream_events.aclose()
-                        close_provider_stream = getattr(provider_stream, "aclose", None)
-                        if close_provider_stream is not None:
-                            await close_provider_stream()
-                        for event in interruption_events:
-                            yield event
-                        return
-
-                    await self.event_sink.emit(
-                        RuntimeEvent(
-                            type="tool.started",
-                            run_id=run_id,
-                            agent_name=agent.name,
-                            payload={"name": call.name},
-                        )
-                    )
-                    tool_result = await execute_tool_call(call, tools, ToolContext(run_id=run_id))
-                    tool_result = await hook_runner.after_tool_result(tool_result, None)
-                    await self.event_sink.emit(
-                        RuntimeEvent(
-                            type="tool.completed",
-                            run_id=run_id,
-                            agent_name=agent.name,
-                            payload={"name": tool_result.name},
-                        )
-                    )
-                    pending_tool_messages.append(
-                        Message.tool(
-                            tool_result.content,
-                            metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
-                        )
-                    )
-                    executed_tool = True
                     continue
 
                 if step_event.kind == "message_completed":
@@ -756,7 +681,7 @@ class Runtime:
                 )
             )
 
-            if executed_tool:
+            if completed_calls:
                 messages.append(
                     Message.assistant(
                         "".join(collected_deltas),
@@ -766,7 +691,37 @@ class Runtime:
                         },
                     )
                 )
-                messages.extend(pending_tool_messages)
+                for call_index, call in enumerate(completed_calls):
+                    tool = tools.get(call.name)
+                    human_request: HumanRequest | None = None
+                    if isinstance(tool, HumanInputToolSpec):
+                        human_request = replace(tool.human_request_from_call(call), tool_call=call)
+                    elif tool is not None and tool.requires_approval:
+                        human_request = HumanRequest(
+                            id=f"hta_{uuid4().hex}",
+                            kind="tool_approval",
+                            prompt=f"Approve tool call: {call.name}",
+                            tool_call=call,
+                        )
+                    if human_request is not None:
+                        interruption_events: list[RuntimeEvent] = []
+                        await self._interrupt(
+                            agent,
+                            request,
+                            run_id,
+                            messages,
+                            human_request,
+                            call,
+                            step + 1,
+                            all_reasoning_deltas,
+                            Usage(),
+                            tuple(completed_calls[call_index + 1 :]),
+                            yielded_events=interruption_events,
+                        )
+                        for event in interruption_events:
+                            yield event
+                        return
+                    await self._execute_call(agent, run_id, call, tools, messages, hook_runner)
                 continue
 
             if saw_message_completed:
@@ -825,6 +780,20 @@ class Runtime:
         return ModelRequest(
             messages=messages,
             tools=tools,
+            metadata=dict(request.metadata),
+            options=dict(request.options),
+        )
+
+    @staticmethod
+    def _agent_tools(agent: Agent) -> dict[str, ToolSpec]:
+        return {tool_spec.name: tool_spec for tool_spec in agent.tools if isinstance(tool_spec, ToolSpec)}
+
+    @staticmethod
+    def _checkpoint_request(request: ModelRequest) -> ModelRequest:
+        """Persist request data without executable tool handlers."""
+        return ModelRequest(
+            messages=[Message(message.role, message.text, dict(message.metadata)) for message in request.messages],
+            tools=[],
             metadata=dict(request.metadata),
             options=dict(request.options),
         )

@@ -4,6 +4,8 @@ Runlet can interrupt a run when a tool call requires human approval or when an a
 
 The core package provides the interruption contract and checkpoint protocol. It does not provide a UI, HTTP API, auth, or durable storage. A future `runlet-harness` project may provide adapters for those concerns, but it is not a dependency of Runlet core.
 
+Checkpoint data contains the request messages, options, metadata, accumulated transcript, and pending calls, but never Python `ToolSpec` handlers. On resume, Runlet resolves tool specifications from the supplied `Agent`. A durable store therefore needs to serialize only checkpoint data, and the resuming process must supply an agent with the required tools.
+
 ## Approve a tool call
 
 Create an approval-gated `ToolSpec` and give `Runtime` an in-memory checkpoint
@@ -113,4 +115,4 @@ checkpoint and response. `resume()` returns a normal, non-streaming
 `checkpoint_id` and the `HumanRequest.id` in the application session so a
 response resumes the intended interruption.
 
-`InMemoryCheckpointStore` is appropriate only while the runtime process stays alive. Implement `CheckpointStore` when the application needs durable checkpoints across restarts or processes.
+`InMemoryCheckpointStore` is appropriate only while the runtime process stays alive. Implement `CheckpointStore` when the application needs durable checkpoints across restarts or processes. Core resume is not exactly-once across concurrent durable resume attempts: a durable adapter needs an atomic claim or lease, plus a resolved-result or idempotency policy for tool execution.
