@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
+import json
 from uuid import uuid4
 
 from runlet.core.agent import Agent
 from runlet.core.events import EventSink, InMemoryObserver, RuntimeEvent
+from runlet.core.human import HumanRequest, HumanResponse
 from runlet.core.messages import Message, ToolCall
 from runlet.core.models import ModelRequest, ModelStreamEvent, ProviderStreamEvent
-from runlet.core.runs import RunResult
+from runlet.core.runs import RunResult, Usage
 from runlet.integrations.hooks import HookRunner
+from runlet.integrations.human import HumanInputToolSpec
 from runlet.integrations.tools import ToolContext, ToolSpec, execute_tool_call
+from runlet.integrations.tools import validate_arguments
+from runlet.runtime.checkpoints import CheckpointStore, InMemoryCheckpointStore, RunCheckpoint
 from runlet.runtime.context import ContextManager
 from runlet.runtime.policies import RunPolicy
 
@@ -20,10 +26,12 @@ class Runtime:
         event_sink: EventSink | None = None,
         context_manager: ContextManager | None = None,
         policy: RunPolicy | None = None,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> None:
         self.event_sink = event_sink or InMemoryObserver()
         self.context_manager = context_manager or ContextManager()
         self.policy = policy or RunPolicy()
+        self.checkpoint_store = checkpoint_store or InMemoryCheckpointStore()
 
     async def run(self, agent: Agent, input: str) -> RunResult:
         return await self.run_request(
@@ -53,9 +61,146 @@ class Runtime:
         request = self._merge_request_defaults(agent, request)
         messages = list(request.messages)
         tools = {tool_spec.name: tool_spec for tool_spec in request.tools if isinstance(tool_spec, ToolSpec)}
-        collected_reasoning: list[str] = []
+        return await self._run_loop(
+            agent,
+            request,
+            run_id,
+            messages,
+            tools,
+            0,
+            [],
+            Usage(),
+            hook_runner,
+        )
 
-        for _ in range(self.policy.max_steps):
+    async def resume(
+        self,
+        agent: Agent,
+        *,
+        checkpoint_id: str,
+        response: HumanResponse,
+    ) -> RunResult:
+        checkpoint = await self.checkpoint_store.load(checkpoint_id)
+        if checkpoint is None:
+            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+        if agent.name != checkpoint.agent_name:
+            raise ValueError("Checkpoint agent does not match the resumed agent.")
+
+        request = checkpoint.pending_request
+        if response.request_id != request.id:
+            raise ValueError("Human response request id does not match the pending request.")
+
+        messages = list(checkpoint.messages)
+        tools = {
+            tool_spec.name: tool_spec
+            for tool_spec in checkpoint.request.tools
+            if isinstance(tool_spec, ToolSpec)
+        }
+        call = checkpoint.pending_tool_call
+        if call is None:
+            raise ValueError("Checkpoint is missing its pending tool call.")
+
+        if request.kind == "tool_approval":
+            if response.action not in {"approve", "reject"}:
+                raise ValueError("Tool approval responses must approve or reject.")
+            if response.action == "approve":
+                arguments = response.edited_arguments if response.edited_arguments is not None else call.arguments
+                tool = tools.get(call.name)
+                if tool is None:
+                    raise ValueError(f"Tool not found: {call.name}")
+                validate_arguments(tool.input_schema, arguments)
+                call = replace(call, arguments=dict(arguments))
+            else:
+                messages.append(
+                    Message.tool(
+                        "Human rejected tool call.",
+                        metadata={
+                            "tool_call_id": call.id,
+                            "name": call.name,
+                            "human_rejected": True,
+                            "reason": response.metadata.get("reason"),
+                        },
+                    )
+                )
+        else:
+            self._validate_human_input_response(request, response)
+            messages.append(
+                Message.tool(
+                    json.dumps({"kind": request.kind, "value": response.value}, separators=(",", ":")),
+                    metadata={"tool_call_id": call.id, "name": call.name, "human_input": True},
+                )
+            )
+
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="human.responded",
+                run_id=checkpoint.run_id,
+                agent_name=agent.name,
+                payload={"request_id": request.id},
+            )
+        )
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="run.resumed",
+                run_id=checkpoint.run_id,
+                agent_name=agent.name,
+                payload={"checkpoint_id": checkpoint.id},
+            )
+        )
+        await self.checkpoint_store.delete(checkpoint.id)
+
+        hook_runner = HookRunner(agent.hooks)
+        if request.kind == "tool_approval" and response.action == "approve":
+            await self.event_sink.emit(
+                RuntimeEvent(
+                    type="tool.started",
+                    run_id=checkpoint.run_id,
+                    agent_name=agent.name,
+                    payload={"name": call.name},
+                )
+            )
+            tool_result = await execute_tool_call(call, tools, ToolContext(run_id=checkpoint.run_id))
+            tool_result = await hook_runner.after_tool_result(tool_result, None)
+            await self.event_sink.emit(
+                RuntimeEvent(
+                    type="tool.completed",
+                    run_id=checkpoint.run_id,
+                    agent_name=agent.name,
+                    payload={"name": tool_result.name},
+                )
+            )
+            messages.append(
+                Message.tool(
+                    tool_result.content,
+                    metadata={"tool_call_id": tool_result.call_id, "name": tool_result.name},
+                )
+            )
+
+        return await self._run_loop(
+            agent,
+            checkpoint.request,
+            checkpoint.run_id,
+            messages,
+            tools,
+            checkpoint.step,
+            [checkpoint.reasoning] if checkpoint.reasoning else [],
+            checkpoint.usage,
+            hook_runner,
+        )
+
+    async def _run_loop(
+        self,
+        agent: Agent,
+        request: ModelRequest,
+        run_id: str,
+        messages: list[Message],
+        tools: dict[str, ToolSpec],
+        start_step: int,
+        reasoning: list[str],
+        usage: Usage,
+        hook_runner: HookRunner,
+    ) -> RunResult:
+        for step in range(start_step, self.policy.max_steps):
             step_request = self._step_request_from_state(request, messages, tools)
             step_request = await hook_runner.before_model_request(step_request, None)
             capabilities = await agent.model.capabilities()
@@ -72,7 +217,8 @@ class Runtime:
             response = await agent.model.complete(prepared.request)
             response = await hook_runner.after_model_response(response, None)
             if response.reasoning:
-                collected_reasoning.append(response.reasoning)
+                reasoning.append(response.reasoning)
+            usage = self._add_usage(usage, response.usage)
             await self.event_sink.emit(
                 RuntimeEvent(
                     type="model.completed",
@@ -96,6 +242,38 @@ class Runtime:
                 )
                 for call in response.tool_calls:
                     call = await hook_runner.before_tool_call(call, None)
+                    tool = tools.get(call.name)
+                    if isinstance(tool, HumanInputToolSpec):
+                        human_request = replace(tool.human_request_from_call(call), tool_call=call)
+                        return await self._interrupt(
+                            agent,
+                            request,
+                            run_id,
+                            messages,
+                            human_request,
+                            call,
+                            step + 1,
+                            reasoning,
+                            usage,
+                        )
+                    if tool is not None and tool.requires_approval:
+                        human_request = HumanRequest(
+                            id=f"hta_{uuid4().hex}",
+                            kind="tool_approval",
+                            prompt=f"Approve tool call: {call.name}",
+                            tool_call=call,
+                        )
+                        return await self._interrupt(
+                            agent,
+                            request,
+                            run_id,
+                            messages,
+                            human_request,
+                            call,
+                            step + 1,
+                            reasoning,
+                            usage,
+                        )
                     await self.event_sink.emit(
                         RuntimeEvent(
                             type="tool.started",
@@ -125,8 +303,9 @@ class Runtime:
             run_result = RunResult.completed(
                 run_id=run_id,
                 output=response.message.text,
-                reasoning="".join(collected_reasoning),
-                usage=response.usage,
+                reasoning="".join(reasoning),
+                usage=usage,
+                messages=tuple(messages),
             )
             await self.event_sink.emit(
                 RuntimeEvent(
@@ -141,7 +320,9 @@ class Runtime:
         run_result = RunResult.failed(
             run_id=run_id,
             error="Maximum steps exceeded",
-            reasoning="".join(collected_reasoning),
+            reasoning="".join(reasoning),
+            usage=usage,
+            messages=tuple(messages),
         )
         await self.event_sink.emit(
             RuntimeEvent(
@@ -152,6 +333,76 @@ class Runtime:
             )
         )
         return run_result
+
+    async def _interrupt(
+        self,
+        agent: Agent,
+        request: ModelRequest,
+        run_id: str,
+        messages: list[Message],
+        human_request: HumanRequest,
+        call: ToolCall,
+        next_step: int,
+        reasoning: list[str],
+        usage: Usage,
+    ) -> RunResult:
+        checkpoint_id = f"checkpoint_{uuid4().hex}"
+        checkpoint = RunCheckpoint(
+            id=checkpoint_id,
+            run_id=run_id,
+            agent_name=agent.name,
+            request=request,
+            messages=tuple(messages),
+            pending_request=human_request,
+            pending_tool_call=call,
+            step=next_step,
+            reasoning="".join(reasoning),
+            usage=usage,
+        )
+        await self.checkpoint_store.save(checkpoint)
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="human.requested",
+                run_id=run_id,
+                agent_name=agent.name,
+                payload={"request_id": human_request.id, "kind": human_request.kind},
+            )
+        )
+        await self.event_sink.emit(
+            RuntimeEvent(
+                type="run.interrupted",
+                run_id=run_id,
+                agent_name=agent.name,
+                payload={"checkpoint_id": checkpoint_id},
+            )
+        )
+        return RunResult.interrupted(
+            run_id=run_id,
+            interruption=human_request,
+            checkpoint_id=checkpoint_id,
+            reasoning="".join(reasoning),
+            usage=usage,
+            messages=tuple(messages),
+        )
+
+    @staticmethod
+    def _add_usage(total: Usage, response: Usage) -> Usage:
+        return Usage(
+            input_tokens=total.input_tokens + response.input_tokens,
+            output_tokens=total.output_tokens + response.output_tokens,
+            source=response.source,
+        )
+
+    @staticmethod
+    def _validate_human_input_response(request: HumanRequest, response: HumanResponse) -> None:
+        if request.kind == "choice":
+            if response.action != "select":
+                raise ValueError("Choice responses must select an option.")
+            if response.value not in {option.id for option in request.options}:
+                raise ValueError("Choice response must select a listed option.")
+            return
+        if response.action != "submit" or not isinstance(response.value, str):
+            raise ValueError("Input responses must submit a string value.")
 
     async def stream(self, agent: Agent, input: str):
         async for event in self.stream_request(
