@@ -126,20 +126,28 @@ class Runtime:
             if remaining_result is not None:
                 return remaining_result
             return await self._continue_checkpoint(agent, checkpoint, messages, tools, hook_runner)
-        if response.request_id != request.id:
-            raise ValueError("Human response request id does not match the pending request.")
-
-        if request.kind == "tool_approval":
-            if response.action not in {"approve", "reject"}:
-                raise ValueError("Tool approval responses must approve or reject.")
-            if response.action == "approve":
+        try:
+            self._validate_human_response(request, response)
+            if request.kind == "tool_approval" and response.action == "approve":
                 arguments = response.edited_arguments if response.edited_arguments is not None else call.arguments
                 tool = tools.get(call.name)
                 if tool is None:
                     raise ValueError(f"Tool not found: {call.name}")
                 validate_arguments(tool.input_schema, arguments)
                 call = replace(call, arguments=dict(arguments))
-            else:
+        except ValueError:
+            await self.event_sink.emit(
+                RuntimeEvent(
+                    type="human.response_rejected",
+                    run_id=checkpoint.run_id,
+                    agent_name=agent.name,
+                    payload=self._human_event_payload(request, checkpoint, action=response.action),
+                )
+            )
+            raise
+
+        if request.kind == "tool_approval":
+            if response.action == "reject":
                 messages.append(
                     Message.tool(
                         "Human rejected tool call.",
@@ -152,7 +160,6 @@ class Runtime:
                     )
                 )
         else:
-            self._validate_human_input_response(request, response)
             messages.append(
                 Message.tool(
                     json.dumps({"kind": request.kind, "value": response.value}, separators=(",", ":")),
@@ -165,7 +172,7 @@ class Runtime:
                 type="human.responded",
                 run_id=checkpoint.run_id,
                 agent_name=agent.name,
-                payload={"request_id": request.id},
+                payload=self._human_event_payload(request, checkpoint, action=response.action),
             )
         )
         await self.event_sink.emit(
@@ -366,7 +373,7 @@ class Runtime:
                 type="human.requested",
                 run_id=run_id,
                 agent_name=agent.name,
-                payload={"request_id": human_request.id, "kind": human_request.kind},
+                payload=self._human_event_payload(human_request, checkpoint),
             )
         )
         await self.event_sink.emit(
@@ -530,15 +537,36 @@ class Runtime:
         )
 
     @staticmethod
-    def _validate_human_input_response(request: HumanRequest, response: HumanResponse) -> None:
+    def _human_event_payload(
+        request: HumanRequest,
+        checkpoint: RunCheckpoint,
+        *,
+        action: str | None = None,
+    ) -> dict[str, str]:
+        payload = {
+            "request_id": request.id,
+            "checkpoint_id": checkpoint.id,
+            "kind": request.kind,
+        }
+        if action is not None:
+            payload["action"] = action
+        return payload
+
+    def _validate_human_response(self, request: HumanRequest, response: HumanResponse) -> None:
+        if response.request_id != request.id:
+            raise ValueError("Human response request id does not match the pending request.")
+        if request.kind == "tool_approval":
+            if response.action not in {"approve", "reject"}:
+                raise ValueError("Tool approval responses must approve or reject.")
+            return
         if request.kind == "choice":
             if response.action != "select":
                 raise ValueError("Choice responses must select an option.")
             if response.value not in {option.id for option in request.options}:
                 raise ValueError("Choice response must select a listed option.")
             return
-        if response.action != "submit" or not isinstance(response.value, str):
-            raise ValueError("Input responses must submit a string value.")
+        if response.action != "submit" or response.value is None:
+            raise ValueError("Input responses must submit a value.")
 
     async def stream(self, agent: Agent, input: str):
         async for event in self.stream_request(
