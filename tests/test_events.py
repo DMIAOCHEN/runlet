@@ -1,4 +1,5 @@
 import unittest
+from collections.abc import Mapping
 
 from runlet import Agent, HumanResponse, Message, Runtime, ToolCall
 from runlet.core.events import CompositeEventSink, InMemoryObserver, RuntimeEvent
@@ -160,7 +161,7 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_unhashable_approval_action_emits_rejection_event_and_retains_checkpoint(self) -> None:
+    async def test_unrecognized_approval_actions_are_omitted_from_rejection_events(self) -> None:
         async def refund(arguments, context):
             del arguments, context
             raise AssertionError("malformed approval must not execute")
@@ -192,23 +193,82 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         agent = Agent(name="support", instructions="Help.", model=model, tools=(refund_tool,))
         interrupted = await runtime.run(agent, "Refund my account")
 
-        with self.assertRaisesRegex(ValueError, "action"):
-            await runtime.resume(
-                agent,
-                checkpoint_id=interrupted.checkpoint_id,
-                response=HumanResponse(request_id=interrupted.interruption.id, action=[]),
+        for action in ([], "private-account-number-12345"):
+            with self.assertRaises(ValueError):
+                await runtime.resume(
+                    agent,
+                    checkpoint_id=interrupted.checkpoint_id,
+                    response=HumanResponse(request_id=interrupted.interruption.id, action=action),
+                )
+
+            self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
+            self.assertEqual(
+                observer.events[-1].payload,
+                {
+                    "request_id": interrupted.interruption.id,
+                    "checkpoint_id": interrupted.checkpoint_id,
+                    "kind": "tool_approval",
+                },
             )
 
-        self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
-        self.assertEqual(
-            observer.events[-1].payload,
-            {
-                "request_id": interrupted.interruption.id,
-                "checkpoint_id": interrupted.checkpoint_id,
-                "kind": "tool_approval",
-                "action": [],
-            },
+    async def test_malformed_approval_edits_emit_rejection_event_and_retain_checkpoint(self) -> None:
+        class UnconvertibleMapping(Mapping):
+            def __getitem__(self, key):
+                raise KeyError(key)
+
+            def __iter__(self):
+                raise TypeError("cannot iterate edited arguments")
+
+            def __len__(self):
+                return 0
+
+        async def refund(arguments, context):
+            del arguments, context
+            raise AssertionError("malformed approval must not execute")
+
+        model = FakeModelProvider(
+            [
+                ModelResponse(
+                    message=Message.assistant(""),
+                    tool_calls=[ToolCall("call_1", "refund", {"account_number": "private-account"})],
+                )
+            ]
         )
+        observer = InMemoryObserver()
+        store = InMemoryCheckpointStore()
+        runtime = Runtime(event_sink=observer, checkpoint_store=store)
+        refund_tool = ToolSpec(
+            name="refund",
+            description="Refund an account.",
+            input_schema={"type": "object", "required": ["account_number"], "properties": {"account_number": {"type": "string"}}},
+            handler=refund,
+            requires_approval=True,
+        )
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(refund_tool,))
+        interrupted = await runtime.run(agent, "Refund my account")
+
+        for edited_arguments in (object(), UnconvertibleMapping()):
+            with self.assertRaisesRegex(ValueError, "arguments"):
+                await runtime.resume(
+                    agent,
+                    checkpoint_id=interrupted.checkpoint_id,
+                    response=HumanResponse(
+                        request_id=interrupted.interruption.id,
+                        action="approve",
+                        edited_arguments=edited_arguments,
+                    ),
+                )
+
+            self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
+            self.assertEqual(
+                observer.events[-1].payload,
+                {
+                    "request_id": interrupted.interruption.id,
+                    "checkpoint_id": interrupted.checkpoint_id,
+                    "kind": "tool_approval",
+                    "action": "approve",
+                },
+            )
 
     async def test_unhashable_choice_value_emits_rejection_event_and_retains_checkpoint(self) -> None:
         model = FakeModelProvider(

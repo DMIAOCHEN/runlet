@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 import json
 from uuid import uuid4
@@ -133,8 +133,14 @@ class Runtime:
                 tool = tools.get(call.name)
                 if tool is None:
                     raise ValueError(f"Tool not found: {call.name}")
-                validate_arguments(tool.input_schema, arguments)
-                call = replace(call, arguments=dict(arguments))
+                if not isinstance(arguments, Mapping):
+                    raise ValueError("Approved tool arguments must be a mapping.")
+                try:
+                    approved_arguments = dict(arguments)
+                except (TypeError, ValueError) as error:
+                    raise ValueError("Approved tool arguments must be convertible to a mapping.") from error
+                validate_arguments(tool.input_schema, approved_arguments)
+                call = replace(call, arguments=approved_arguments)
         except ValueError:
             await self.event_sink.emit(
                 RuntimeEvent(
@@ -542,13 +548,13 @@ class Runtime:
         checkpoint: RunCheckpoint,
         *,
         action: object | None = None,
-    ) -> dict[str, object]:
-        payload: dict[str, object] = {
+    ) -> dict[str, str]:
+        payload = {
             "request_id": request.id,
             "checkpoint_id": checkpoint.id,
             "kind": request.kind,
         }
-        if action is not None:
+        if isinstance(action, str) and action in {"approve", "reject", "select", "submit"}:
             payload["action"] = action
         return payload
 
