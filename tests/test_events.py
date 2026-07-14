@@ -4,6 +4,8 @@ from runlet import Agent, HumanResponse, Message, Runtime, ToolCall
 from runlet.core.events import CompositeEventSink, InMemoryObserver, RuntimeEvent
 from runlet.core.models import ModelResponse
 from runlet.integrations.human import ask_human
+from runlet.integrations.tools import ToolSpec
+from runlet.runtime.checkpoints import InMemoryCheckpointStore
 from runlet.testing import FakeModelProvider
 
 
@@ -150,6 +152,132 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.type, "human.response_rejected")
         self.assertEqual(
             event.payload,
+            {
+                "request_id": interrupted.interruption.id,
+                "checkpoint_id": interrupted.checkpoint_id,
+                "kind": "input",
+                "action": "submit",
+            },
+        )
+
+    async def test_unhashable_approval_action_emits_rejection_event_and_retains_checkpoint(self) -> None:
+        async def refund(arguments, context):
+            del arguments, context
+            raise AssertionError("malformed approval must not execute")
+
+        model = FakeModelProvider(
+            [
+                ModelResponse(
+                    message=Message.assistant(""),
+                    tool_calls=[
+                        ToolCall(
+                            "call_1",
+                            "refund",
+                            {"account_number": "private-account"},
+                        )
+                    ],
+                )
+            ]
+        )
+        observer = InMemoryObserver()
+        store = InMemoryCheckpointStore()
+        runtime = Runtime(event_sink=observer, checkpoint_store=store)
+        refund_tool = ToolSpec(
+            name="refund",
+            description="Refund an account.",
+            input_schema={"type": "object", "required": ["account_number"], "properties": {"account_number": {"type": "string"}}},
+            handler=refund,
+            requires_approval=True,
+        )
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(refund_tool,))
+        interrupted = await runtime.run(agent, "Refund my account")
+
+        with self.assertRaisesRegex(ValueError, "action"):
+            await runtime.resume(
+                agent,
+                checkpoint_id=interrupted.checkpoint_id,
+                response=HumanResponse(request_id=interrupted.interruption.id, action=[]),
+            )
+
+        self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
+        self.assertEqual(
+            observer.events[-1].payload,
+            {
+                "request_id": interrupted.interruption.id,
+                "checkpoint_id": interrupted.checkpoint_id,
+                "kind": "tool_approval",
+                "action": [],
+            },
+        )
+
+    async def test_unhashable_choice_value_emits_rejection_event_and_retains_checkpoint(self) -> None:
+        model = FakeModelProvider(
+            [
+                ModelResponse(
+                    message=Message.assistant(""),
+                    tool_calls=[
+                        ToolCall(
+                            "call_1",
+                            "ask_human",
+                            {
+                                "kind": "choice",
+                                "prompt": "Choose a private plan.",
+                                "options": [{"id": "pro", "label": "Pro"}],
+                            },
+                        )
+                    ],
+                )
+            ]
+        )
+        observer = InMemoryObserver()
+        store = InMemoryCheckpointStore()
+        runtime = Runtime(event_sink=observer, checkpoint_store=store)
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(ask_human(),))
+        interrupted = await runtime.run(agent, "Ask for my plan")
+
+        with self.assertRaisesRegex(ValueError, "listed"):
+            await runtime.resume(
+                agent,
+                checkpoint_id=interrupted.checkpoint_id,
+                response=HumanResponse(request_id=interrupted.interruption.id, action="select", value=[]),
+            )
+
+        self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
+        self.assertEqual(
+            observer.events[-1].payload,
+            {
+                "request_id": interrupted.interruption.id,
+                "checkpoint_id": interrupted.checkpoint_id,
+                "kind": "choice",
+                "action": "select",
+            },
+        )
+
+    async def test_input_without_value_emits_rejection_event_and_retains_checkpoint(self) -> None:
+        model = FakeModelProvider(
+            [
+                ModelResponse(
+                    message=Message.assistant(""),
+                    tool_calls=[ToolCall("call_1", "ask_human", {"kind": "input", "prompt": "Enter a secret."})],
+                )
+            ]
+        )
+        observer = InMemoryObserver()
+        store = InMemoryCheckpointStore()
+        runtime = Runtime(event_sink=observer, checkpoint_store=store)
+        agent = Agent(name="support", instructions="Help.", model=model, tools=(ask_human(),))
+        interrupted = await runtime.run(agent, "Ask for a secret")
+
+        with self.assertRaisesRegex(ValueError, "value"):
+            await runtime.resume(
+                agent,
+                checkpoint_id=interrupted.checkpoint_id,
+                response=HumanResponse(request_id=interrupted.interruption.id, action="submit"),
+            )
+
+        self.assertIsNotNone(await store.load(interrupted.checkpoint_id))
+        self.assertEqual(
+            observer.events[-1].payload,
             {
                 "request_id": interrupted.interruption.id,
                 "checkpoint_id": interrupted.checkpoint_id,

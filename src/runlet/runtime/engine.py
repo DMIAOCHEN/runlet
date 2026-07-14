@@ -541,9 +541,9 @@ class Runtime:
         request: HumanRequest,
         checkpoint: RunCheckpoint,
         *,
-        action: str | None = None,
-    ) -> dict[str, str]:
-        payload = {
+        action: object | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
             "request_id": request.id,
             "checkpoint_id": checkpoint.id,
             "kind": request.kind,
@@ -555,6 +555,8 @@ class Runtime:
     def _validate_human_response(self, request: HumanRequest, response: HumanResponse) -> None:
         if response.request_id != request.id:
             raise ValueError("Human response request id does not match the pending request.")
+        if not isinstance(response.action, str):
+            raise ValueError("Human response action must be a string.")
         if request.kind == "tool_approval":
             if response.action not in {"approve", "reject"}:
                 raise ValueError("Tool approval responses must approve or reject.")
@@ -562,7 +564,7 @@ class Runtime:
         if request.kind == "choice":
             if response.action != "select":
                 raise ValueError("Choice responses must select an option.")
-            if response.value not in {option.id for option in request.options}:
+            if not isinstance(response.value, str) or response.value not in {option.id for option in request.options}:
                 raise ValueError("Choice response must select a listed option.")
             return
         if response.action != "submit" or response.value is None:
