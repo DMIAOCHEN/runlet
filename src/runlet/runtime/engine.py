@@ -632,6 +632,10 @@ class Runtime:
             collected_reasoning_deltas: list[str] = []
             completed_tool_calls: list[dict[str, object]] = []
             completed_calls: list[ToolCall] = []
+            pending_tool_messages: list[Message] = []
+            pending_human_request: HumanRequest | None = None
+            pending_human_call: ToolCall | None = None
+            pending_human_call_index: int | None = None
             provider_stream = agent.model.stream(prepared.request)
             stream_events = self._iter_provider_stream_events(provider_stream)
             async for step_event in stream_events:
@@ -668,6 +672,27 @@ class Runtime:
                     completed_tool_calls.append(
                         {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
                     )
+                    if pending_human_request is not None:
+                        continue
+
+                    tool = tools.get(call.name)
+                    if isinstance(tool, HumanInputToolSpec):
+                        pending_human_request = replace(tool.human_request_from_call(call), tool_call=call)
+                        pending_human_call = call
+                        pending_human_call_index = len(completed_calls) - 1
+                        continue
+                    if tool is not None and tool.requires_approval:
+                        pending_human_request = HumanRequest(
+                            id=f"hta_{uuid4().hex}",
+                            kind="tool_approval",
+                            prompt=f"Approve tool call: {call.name}",
+                            tool_call=call,
+                        )
+                        pending_human_call = call
+                        pending_human_call_index = len(completed_calls) - 1
+                        continue
+
+                    await self._execute_call(agent, run_id, call, tools, pending_tool_messages, hook_runner)
                     continue
 
                 if step_event.kind == "message_completed":
@@ -691,37 +716,29 @@ class Runtime:
                         },
                     )
                 )
-                for call_index, call in enumerate(completed_calls):
-                    tool = tools.get(call.name)
-                    human_request: HumanRequest | None = None
-                    if isinstance(tool, HumanInputToolSpec):
-                        human_request = replace(tool.human_request_from_call(call), tool_call=call)
-                    elif tool is not None and tool.requires_approval:
-                        human_request = HumanRequest(
-                            id=f"hta_{uuid4().hex}",
-                            kind="tool_approval",
-                            prompt=f"Approve tool call: {call.name}",
-                            tool_call=call,
-                        )
-                    if human_request is not None:
-                        interruption_events: list[RuntimeEvent] = []
-                        await self._interrupt(
-                            agent,
-                            request,
-                            run_id,
-                            messages,
-                            human_request,
-                            call,
-                            step + 1,
-                            all_reasoning_deltas,
-                            Usage(),
-                            tuple(completed_calls[call_index + 1 :]),
-                            yielded_events=interruption_events,
-                        )
-                        for event in interruption_events:
-                            yield event
-                        return
-                    await self._execute_call(agent, run_id, call, tools, messages, hook_runner)
+                messages.extend(pending_tool_messages)
+                if (
+                    pending_human_request is not None
+                    and pending_human_call is not None
+                    and pending_human_call_index is not None
+                ):
+                    interruption_events: list[RuntimeEvent] = []
+                    await self._interrupt(
+                        agent,
+                        request,
+                        run_id,
+                        messages,
+                        pending_human_request,
+                        pending_human_call,
+                        step + 1,
+                        all_reasoning_deltas,
+                        Usage(),
+                        tuple(completed_calls[pending_human_call_index + 1 :]),
+                        yielded_events=interruption_events,
+                    )
+                    for event in interruption_events:
+                        yield event
+                    return
                 continue
 
             if saw_message_completed:

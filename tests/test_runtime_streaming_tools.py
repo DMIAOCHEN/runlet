@@ -99,4 +99,11 @@ class RuntimeStreamingToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model.requests[2].messages[-1].role, "tool")
         self.assertIn("tool.started", [event.type for event in observer.events])
         self.assertIn("tool.completed", [event.type for event in observer.events])
+        first_stream_completed = next(
+            index for index, event in enumerate(observer.events) if event.type == "model.stream.completed"
+        )
+        first_tool_started = next(index for index, event in enumerate(observer.events) if event.type == "tool.started")
+        first_tool_completed = next(index for index, event in enumerate(observer.events) if event.type == "tool.completed")
+        self.assertLess(first_tool_started, first_stream_completed)
+        self.assertLess(first_tool_completed, first_stream_completed)
         self.assertEqual(observer.events[-1].type, "run.completed")
