@@ -55,7 +55,7 @@ from runlet.runtime import (
     ToolPolicy,
 )
 
-__version__ = "0.2.0b2"
+__version__ = "0.2.0b3"
 
 __all__ = [
     "Agent",
