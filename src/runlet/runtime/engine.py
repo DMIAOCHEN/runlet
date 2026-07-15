@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 import json
+from typing import Any, cast
 from uuid import uuid4
 
 from runlet.core.agent import Agent
@@ -121,14 +122,17 @@ class Runtime:
         try:
             self._validate_human_response(request, response)
             if request.kind == "tool_approval" and response.action == "approve":
-                arguments = response.edited_arguments if response.edited_arguments is not None else call.arguments
+                arguments = cast(
+                    object,
+                    response.edited_arguments if response.edited_arguments is not None else call.arguments,
+                )
                 tool = tools.get(call.name)
                 if tool is None:
                     raise ValueError(f"Tool not found: {call.name}")
                 if not isinstance(arguments, Mapping):
                     raise ValueError("Approved tool arguments must be a mapping.")
                 try:
-                    approved_arguments = dict(arguments)
+                    approved_arguments = dict(cast(Mapping[str, Any], arguments))
                 except (TypeError, ValueError) as error:
                     raise ValueError("Approved tool arguments must be convertible to a mapping.") from error
                 validate_arguments(tool.input_schema, approved_arguments)
@@ -556,7 +560,8 @@ class Runtime:
     def _validate_human_response(self, request: HumanRequest, response: HumanResponse) -> None:
         if response.request_id != request.id:
             raise ValueError("Human response request id does not match the pending request.")
-        if not isinstance(response.action, str):
+        action = cast(object, response.action)
+        if not isinstance(action, str):
             raise ValueError("Human response action must be a string.")
         if response.edited_arguments is not None and (request.kind != "tool_approval" or response.action != "approve"):
             raise ValueError("edited_arguments are only allowed when approving a tool call.")

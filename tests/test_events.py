@@ -1,3 +1,5 @@
+# pyright: strict, reportArgumentType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportOptionalMemberAccess=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownVariableType=false
+
 import unittest
 from collections.abc import Mapping
 

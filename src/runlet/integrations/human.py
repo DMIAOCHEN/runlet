@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from runlet.core.human import HumanOption, HumanRequest
@@ -47,9 +47,12 @@ class HumanInputToolSpec(ToolSpec):
 
         options: list[HumanOption] = []
         option_ids: set[str] = set()
-        for value_option in value:
+        choice_values = cast(list[object], value)
+        for value_option in choice_values:
             if not isinstance(value_option, Mapping):
                 raise ValueError("Choice options must be maps.")
+
+            value_option = cast(Mapping[str, object], value_option)
 
             option_id = value_option.get("id")
             label = value_option.get("label")
@@ -62,9 +65,10 @@ class HumanInputToolSpec(ToolSpec):
 
             description: str | None = None
             if "description" in value_option:
-                description = value_option["description"]
-                if not isinstance(description, str):
+                description_value = value_option["description"]
+                if not isinstance(description_value, str):
                     raise ValueError("Choice option description must be a string.")
+                description = description_value
 
             option_ids.add(option_id)
             options.append(HumanOption(id=option_id, label=label, description=description))
